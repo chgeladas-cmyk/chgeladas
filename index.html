@@ -468,6 +468,10 @@ document.addEventListener('DOMContentLoaded', () => {
       <input type="hidden" id="epId">
       <div class="grid grid-cols-2 gap-4">
         <div class="col-span-2"><label class="label">Nome</label><input type="text" id="epNome" class="inp"></div>
+        <div class="col-span-2">
+          <label class="label">Categoria</label>
+          <select id="epCategoria" class="inp"><option value="">— Sem categoria —</option></select>
+        </div>
         <div><label class="label">Custo Un.</label><input type="number" id="epCusto" class="inp" step="0.01"></div>
         <div><label class="label">Preço Venda Un.</label><input type="number" id="epPreco" class="inp" step="0.01"></div>
         <div class="col-span-2">
@@ -550,6 +554,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <span id="alertaCount">0</span> Baixo
       </button>
       <div id="syncDot" title="Sincronizado com Firestore" class="w-2 h-2 rounded-full bg-emerald-400" style="display:none;"></div>
+      <button onclick="abrirConfig()" id="configBtn" title="Configurações" class="adm w-8 h-8 rounded-lg bg-slate-900 border border-white/5 flex items-center justify-center text-slate-500 hover:text-blue-400 transition-all">
+        <i class="fas fa-cog text-xs"></i>
+      </button>
       <button onclick="location.reload()" title="Encerrar Sessão" class="w-8 h-8 rounded-lg bg-slate-900 border border-white/5 flex items-center justify-center text-slate-500 hover:text-red-400 transition-all">
         <i class="fas fa-power-off text-xs"></i>
       </button>
@@ -624,6 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           </div>
           <!-- grade 2 cols no mobile, 2-3 no desktop -->
+          <div id="catFilterRow" class="hidden flex gap-2 overflow-x-auto no-scroll pb-1"></div>
           <div id="catalogo" class="grid grid-cols-2 gap-2 overflow-y-auto scroll" style="max-height:68vh"></div>
         </div>
 
@@ -705,6 +713,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <div><label class="label">Custo Compra (Un.)</label><input type="number" id="pCusto" class="inp" placeholder="0.00"></div>
             <div><label class="label">Stock Inicial</label><input type="number" id="pQtd" class="inp" placeholder="0"></div>
             <div><label class="label">Preço Venda (Un.)</label><input type="number" id="pPreco" class="inp" placeholder="0.00"></div>
+            <div class="col-span-1 md:col-span-2">
+              <label class="label">Categoria</label>
+              <select id="pCategoria" class="inp"><option value="">— Sem categoria —</option></select>
+            </div>
           </div>
           <div class="bg-black/20 p-6 rounded-3xl border border-white/5">
             <h4 class="label mb-4 !text-amber-400">Packs de Venda</h4>
@@ -1536,5 +1548,82 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 })();
 </script>
+<!-- ═══════════════════════ MODAL CONFIGURAÇÕES ═══════════════════════ -->
+<div id="modalConfig" class="modal">
+  <div class="modal-box max-w-lg overflow-hidden">
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <h3 class="text-sm font-black uppercase text-blue-400"><i class="fas fa-cog mr-2"></i>Configurações</h3>
+      <button onclick="UIService.closeModal('modalConfig')" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"><i class="fas fa-times text-xs"></i></button>
+    </div>
+    <div class="p-6 space-y-6 overflow-y-auto scroll" style="max-height:75vh">
+
+      <!-- Estabelecimento -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">🏪 Estabelecimento</p>
+        <label class="label">Nome do Estabelecimento</label>
+        <input type="text" id="cfgNome" class="inp" placeholder="Ex: CH Geladas">
+      </section>
+
+      <!-- PINs -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">🔐 Segurança</p>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">Novo PIN Administrador</label>
+            <input type="password" id="cfgPinAdm" class="inp" placeholder="Mín. 3 dígitos">
+          </div>
+          <div>
+            <label class="label">Novo PIN Colaborador</label>
+            <input type="password" id="cfgPinColab" class="inp" placeholder="Mín. 3 dígitos">
+          </div>
+        </div>
+        <p class="text-[10px] text-slate-500 mt-2">Deixe em branco para manter o PIN atual.</p>
+      </section>
+
+      <!-- Alerta Stock -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">⚠️ Alerta de Stock</p>
+        <label class="label">Quantidade mínima para alertar</label>
+        <input type="number" id="cfgAlerta" class="inp" min="1" placeholder="3">
+        <p class="text-[10px] text-slate-500 mt-2">Produtos com stock igual ou abaixo deste valor são destacados.</p>
+      </section>
+
+      <!-- Telegram -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">📩 Notificações Telegram</p>
+        <div class="space-y-3">
+          <div>
+            <label class="label">Token do Bot</label>
+            <input type="text" id="cfgTgToken" class="inp font-mono text-[11px]" placeholder="123456789:ABC-DEF...">
+          </div>
+          <div>
+            <label class="label">Chat ID</label>
+            <input type="text" id="cfgTgChatId" class="inp font-mono text-[11px]" placeholder="-100123456789">
+          </div>
+          <button onclick="testarTelegram()" class="w-full bg-slate-800 hover:bg-slate-700 border border-white/10 py-2.5 rounded-xl text-xs font-black text-slate-300 uppercase tracking-wide transition-all flex items-center justify-center gap-2">
+            <i class="fab fa-telegram text-blue-400"></i> Testar Notificação
+          </button>
+        </div>
+      </section>
+
+      <!-- Categorias -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">🏷️ Categorias de Produtos</p>
+        <div class="flex gap-2 mb-3">
+          <input type="text" id="cfgCatNova" class="inp" placeholder="Nova categoria...">
+          <button onclick="addCfgCategoria()" class="bg-blue-600 hover:bg-blue-500 px-4 rounded-xl text-xs font-black text-white transition-all flex-shrink-0">+ Adicionar</button>
+        </div>
+        <div id="cfgCatList" class="space-y-2 min-h-[32px]"></div>
+        <p class="text-[10px] text-slate-500 mt-2">As categorias aparecem como filtros no catálogo PDV e no campo de edição de produto.</p>
+      </section>
+
+    </div>
+    <div class="p-5 border-t border-white/5 flex gap-3">
+      <button onclick="salvarConfig()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-black uppercase text-xs tracking-wide transition-all">💾 Guardar</button>
+      <button onclick="UIService.closeModal('modalConfig')" class="bg-slate-800 px-6 rounded-xl font-black uppercase text-xs text-slate-400 tracking-wide">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

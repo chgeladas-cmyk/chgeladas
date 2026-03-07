@@ -211,6 +211,11 @@ const CryptoService = (() => {
    */
   async function validatePin(pin) {
     const hash = await sha256(pin);
+    // PINs personalizados (config) têm prioridade
+    const cfg = (typeof Store !== 'undefined') ? Store.Selectors.getConfig() : {};
+    if (cfg.pinHashAdmin && hash === cfg.pinHashAdmin) return 'admin';
+    if (cfg.pinHashPdv   && hash === cfg.pinHashPdv)   return 'pdv';
+    // Fallback para constantes padrão
     if (hash === CONSTANTS.PIN_HASH.ADMIN) return 'admin';
     if (hash === CONSTANTS.PIN_HASH.PDV)   return 'pdv';
     return null;
@@ -336,6 +341,12 @@ const Store = (() => {
   function _ensureDefaults() {
     const d = _state;
     if (!d.config)              d.config = { whatsapp: '' };
+    if (!d.config.nome)         d.config.nome = '';
+    if (typeof d.config.alertaStock !== 'number') d.config.alertaStock = CONSTANTS.LOW_STOCK_THRESHOLD;
+    if (!d.config.telegram)     d.config.telegram = { token: '', chatId: '' };
+    if (!Array.isArray(d.config.categorias)) d.config.categorias = [];
+    if (d.config.pinHashAdmin === undefined) d.config.pinHashAdmin = '';
+    if (d.config.pinHashPdv   === undefined) d.config.pinHashPdv   = '';
     if (!Array.isArray(d.estoque))    d.estoque    = [];
     if (!Array.isArray(d.vendas))     d.vendas     = [];
     if (!Array.isArray(d.ponto))      d.ponto      = [];
@@ -392,7 +403,10 @@ const Store = (() => {
     getPedidoById:     id => _state.delivery.pedidos.find(p => String(p.id) === String(id)) || null,
     getEntregadorById: id => _state.delivery.entregadores.find(e => String(e.id) === String(id)) || null,
     getZonaById:       id => _state.delivery.zonas.find(z => String(z.id) === String(id)) || null,
-    getLowStockItems:  () => _state.estoque.filter(p => p.qtdUn > 0 && p.qtdUn <= CONSTANTS.LOW_STOCK_THRESHOLD),
+    getLowStockItems:  () => {
+      const thresh = _state.config?.alertaStock ?? CONSTANTS.LOW_STOCK_THRESHOLD;
+      return _state.estoque.filter(p => p.qtdUn > 0 && p.qtdUn <= thresh);
+    },
     getOutOfStockItems:() => _state.estoque.filter(p => p.qtdUn <= 0),
     isCaixaOpen:       () => (_state.caixa || [])[0]?.tipo === 'ABERTURA',
     vendasHoje: () => {
@@ -1000,6 +1014,30 @@ const RenderService = (() => {
   }
 
   /* ── Catálogo ─────────────────────────────────────────────── */
+  /* ── Filtro por categoria ─────────────────────────────────── */
+  let _activeCat = null;
+
+  function setCatFilter(cat) {
+    _activeCat = (_activeCat === cat) ? null : cat;
+    renderCatFilter();
+    renderCatalogo();
+  }
+
+  function renderCatFilter() {
+    const row = Utils.el('catFilterRow');
+    if (!row) return;
+    const cats = Store.Selectors.getConfig()?.categorias || [];
+    if (cats.length === 0) { row.classList.add('hidden'); return; }
+    row.classList.remove('hidden');
+    const pill = (label, val) => {
+      const active = _activeCat === val;
+      return `<button onclick="setCatFilter(${val === null ? 'null' : `'${val.replace(/'/g, "\\'")}'`})" ` +
+        `class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border ` +
+        `${active ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-blue-500/40'}">${label}</button>`;
+    };
+    row.innerHTML = pill('Todos', null) + cats.map(c => pill(c, c)).join('');
+  }
+
   function renderCatalogo() {
     const cont = Utils.el('catalogo');
     if (!cont) return;
@@ -1019,16 +1057,18 @@ const RenderService = (() => {
 
     const busca   = (Utils.el('searchProd')?.value || '').toLowerCase();
     const estoque = Store.Selectors.getEstoque();
-    const filtered = busca
-      ? estoque.filter(p => p.nome.toLowerCase().includes(busca))
-      : estoque;
+    const filtered = estoque.filter(p => {
+      const buscaOk = !busca || p.nome.toLowerCase().includes(busca);
+      const catOk   = !_activeCat || (p.categoria || '') === _activeCat;
+      return buscaOk && catOk;
+    });
 
     if (filtered.length === 0) {
       cont.innerHTML = `
         <div class="col-span-full flex flex-col items-center justify-center py-20 opacity-20">
           <i class="fas fa-beer text-5xl mb-4 text-slate-600"></i>
           <p class="text-[10px] font-black uppercase tracking-widest text-slate-600">
-            ${busca ? 'Nenhum produto encontrado' : 'Catálogo vazio'}
+            ${busca || _activeCat ? 'Nenhum produto encontrado' : 'Catálogo vazio'}
           </p>
         </div>`;
       return;
@@ -1052,7 +1092,8 @@ const RenderService = (() => {
    */
   function _buildProdCard(p, bloqueado = false) {
     const esgotado   = p.qtdUn <= 0;
-    const baixoStock = !esgotado && p.qtdUn <= CONSTANTS.LOW_STOCK_THRESHOLD;
+    const _thresh    = Store.Selectors.getConfig()?.alertaStock ?? CONSTANTS.LOW_STOCK_THRESHOLD;
+    const baixoStock = !esgotado && p.qtdUn <= _thresh;
     const stockCls   = esgotado   ? 'text-red-400'
                      : baixoStock ? 'text-amber-400'
                      :              'text-emerald-400';
@@ -1216,7 +1257,7 @@ const RenderService = (() => {
       .replace(/'/g, '&#39;');
   }
 
-  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, _escapeHtml });
+  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, renderCatFilter, setCatFilter, _escapeHtml, get _activeCat() { return _activeCat; } });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1426,6 +1467,9 @@ const Bootstrap = (() => {
     // ter ocorrido entre init() e o momento do login.
 
     // Renderiza módulos iniciais
+    const _nomeCfg = Store.Selectors.getConfig()?.nome;
+    if (_nomeCfg) document.title = _nomeCfg;
+    RenderService.renderCatFilter();
     RenderService.renderCatalogo();
     RenderService.renderCarrinho();
     if (typeof renderEstoque    === 'function') renderEstoque();
@@ -1673,6 +1717,116 @@ Object.defineProperty(window, 'lastSale', {
   get: () => VendaService.getLastSale(),
   configurable: true,
 });
+
+/* ── Bridge global setCatFilter ─────────────────────────────────── */
+function setCatFilter(cat) { RenderService.setCatFilter(cat); }
+
+/* ── Configurações ──────────────────────────────────────────────── */
+
+/** Abre o modal de configurações e preenche todos os campos */
+function abrirConfig() {
+  const cfg = Store.Selectors.getConfig();
+  const el  = id => Utils.el(id);
+  if (el('cfgNome'))     el('cfgNome').value    = cfg.nome || '';
+  if (el('cfgAlerta'))   el('cfgAlerta').value  = cfg.alertaStock ?? 3;
+  if (el('cfgTgToken'))  el('cfgTgToken').value = cfg.telegram?.token  || '';
+  if (el('cfgTgChatId')) el('cfgTgChatId').value= cfg.telegram?.chatId || '';
+  if (el('cfgPinAdm'))   el('cfgPinAdm').value  = '';
+  if (el('cfgPinColab')) el('cfgPinColab').value = '';
+  _renderCfgCategorias();
+  UIService.openModal('modalConfig');
+}
+
+/** Renderiza lista de categorias dentro do modal */
+function _renderCfgCategorias() {
+  const list = Utils.el('cfgCatList');
+  if (!list) return;
+  const cats = Store.Selectors.getConfig()?.categorias || [];
+  if (cats.length === 0) {
+    list.innerHTML = '<p class="text-[10px] text-slate-600 text-center py-3">Nenhuma categoria ainda.</p>';
+    return;
+  }
+  list.innerHTML = cats.map((c, i) => `
+    <div class="flex items-center justify-between bg-slate-800/60 border border-white/5 rounded-xl px-4 py-2.5">
+      <span class="text-[11px] font-black text-slate-300 uppercase tracking-wide">${c}</span>
+      <button onclick="removeCfgCategoria(${i})" class="text-red-400 hover:text-red-300 text-xs ml-3 transition-colors" aria-label="Remover ${c}"><i class="fas fa-trash"></i></button>
+    </div>`).join('');
+}
+
+/** Adiciona nova categoria ao store (salva só ao guardar config) */
+function addCfgCategoria() {
+  const inp = Utils.el('cfgCatNova');
+  const val = (inp?.value || '').trim();
+  if (!val) return;
+  const cfg  = Store.Selectors.getConfig();
+  const cats = [...(cfg.categorias || [])];
+  if (cats.map(c => c.toLowerCase()).includes(val.toLowerCase())) {
+    UIService.showToast('Categoria duplicada', val, 'warning'); return;
+  }
+  cats.push(val);
+  Store.mutate({ config: { ...cfg, categorias: cats } });
+  if (inp) inp.value = '';
+  _renderCfgCategorias();
+}
+
+/** Remove categoria por índice */
+function removeCfgCategoria(idx) {
+  const cfg  = Store.Selectors.getConfig();
+  const cats = [...(cfg.categorias || [])];
+  cats.splice(idx, 1);
+  Store.mutate({ config: { ...cfg, categorias: cats } });
+  _renderCfgCategorias();
+}
+
+/** Guarda todas as configurações */
+async function salvarConfig() {
+  const cfg    = { ...Store.Selectors.getConfig() };
+  const nome   = (Utils.el('cfgNome')?.value   || '').trim();
+  const alerta = parseInt(Utils.el('cfgAlerta')?.value) || 3;
+  const tgTok  = (Utils.el('cfgTgToken')?.value || '').trim();
+  const tgCid  = (Utils.el('cfgTgChatId')?.value|| '').trim();
+  const pinA   = (Utils.el('cfgPinAdm')?.value  || '').trim();
+  const pinC   = (Utils.el('cfgPinColab')?.value || '').trim();
+
+  // Validação dos PINs
+  if (pinA && pinA.length < 3) { UIService.showToast('PIN inválido', 'PIN Administrador precisa de mínimo 3 dígitos', 'error'); return; }
+  if (pinC && pinC.length < 3) { UIService.showToast('PIN inválido', 'PIN Colaborador precisa de mínimo 3 dígitos', 'error'); return; }
+
+  cfg.nome        = nome;
+  cfg.alertaStock = alerta;
+  cfg.telegram    = { token: tgTok, chatId: tgCid };
+  if (pinA) cfg.pinHashAdmin = await CryptoService.sha256(pinA);
+  if (pinC) cfg.pinHashPdv   = await CryptoService.sha256(pinC);
+
+  Store.mutate({ config: cfg });
+  SyncService.persist();
+
+  if (nome) document.title = nome;
+  RenderService.renderCatFilter();
+  RenderService.renderCatalogo();
+  UIService.refreshAlerts();
+  UIService.closeModal('modalConfig');
+  UIService.showToast('Configurações guardadas', nome || '✓', 'success');
+}
+
+/** Envia mensagem de teste ao bot Telegram */
+async function testarTelegram() {
+  const token  = (Utils.el('cfgTgToken')?.value  || '').trim();
+  const chatId = (Utils.el('cfgTgChatId')?.value || '').trim();
+  if (!token || !chatId) { UIService.showToast('Preencha Token e Chat ID', '', 'warning'); return; }
+  try {
+    const res  = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: '✅ CH Geladas PDV — notificações Telegram activas!' })
+    });
+    const data = await res.json();
+    if (data.ok) UIService.showToast('Telegram OK!', 'Mensagem enviada com sucesso', 'success');
+    else         UIService.showToast('Erro Telegram', data.description || 'Verifique token/chatId', 'error');
+  } catch (e) {
+    UIService.showToast('Erro de rede', e.message, 'error');
+  }
+}
 
 /* ── Inicia a aplicação ─────────────────────────────────────────── */
 Bootstrap.start();

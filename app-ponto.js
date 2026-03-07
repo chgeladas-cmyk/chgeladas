@@ -704,6 +704,13 @@ const EstoqueService = (() => {
     ['pNome', 'pCusto', 'pQtd', 'pPreco', 'editId'].forEach(id => {
       const el = Utils.el(id); if (el) el.value = '';
     });
+    // Reset e popular select de categorias
+    const pCat = Utils.el('pCategoria');
+    if (pCat) {
+      const cats = Store.Selectors.getConfig()?.categorias || [];
+      pCat.innerHTML = '<option value="">— Sem categoria —</option>' +
+        cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
     const formTitle = Utils.el('formTitle');
     if (formTitle) formTitle.textContent = 'Novo Produto';
     const btnSalvar = Utils.el('btnSalvar');
@@ -729,10 +736,11 @@ const EstoqueService = (() => {
   }
 
   function salvarProduto() {
-    const nome  = Utils.el('pNome')?.value.trim()    || '';
-    const preco = parseFloat(Utils.el('pPreco')?.value) || 0;
-    const custo = parseFloat(Utils.el('pCusto')?.value) || 0;
-    const qtd   = parseInt(Utils.el('pQtd')?.value)     || 0;
+    const nome      = Utils.el('pNome')?.value.trim()    || '';
+    const preco     = parseFloat(Utils.el('pPreco')?.value) || 0;
+    const custo     = parseFloat(Utils.el('pCusto')?.value) || 0;
+    const qtd       = parseInt(Utils.el('pQtd')?.value)     || 0;
+    const categoria = Utils.el('pCategoria')?.value || '';
 
     const validation = Validators.validateProduct({ nome, precoUn: preco, custoUn: custo, qtdUn: qtd });
     if (!validation.valid) { UIService.showToast('Erro', validation.errors[0], 'error'); return; }
@@ -741,12 +749,12 @@ const EstoqueService = (() => {
       Store.mutate(state => {
         const idx = state.estoque.findIndex(p => String(p.id) === String(_editingId));
         if (idx !== -1)
-          state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, packs: [..._tempPacks] };
+          state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._tempPacks] };
       }, true);
       UIService.showToast('Estoque', `${nome} atualizado`);
     } else {
       Store.mutate(state => {
-        state.estoque.push({ id: Utils.generateId(), nome, precoUn: preco, custoUn: custo, qtdUn: qtd, packs: [..._tempPacks] });
+        state.estoque.push({ id: Utils.generateId(), nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._tempPacks] });
       }, true);
       UIService.showToast('Estoque', `${nome} adicionado`);
     }
@@ -768,6 +776,14 @@ const EstoqueService = (() => {
     set('pPreco',  prod.precoUn);
     set('pCusto',  prod.custoUn);
     set('pQtd',    prod.qtdUn);
+
+    // Popular e definir categoria
+    const pCat = Utils.el('pCategoria');
+    if (pCat) {
+      const cats = Store.Selectors.getConfig()?.categorias || [];
+      pCat.innerHTML = '<option value="">— Sem categoria —</option>' +
+        cats.map(c => `<option value="${c}"${c === (prod.categoria || '') ? ' selected' : ''}>${c}</option>`).join('');
+    }
 
     const formTitle = Utils.el('formTitle');
     if (formTitle) formTitle.textContent = 'Editar Produto';
@@ -806,6 +822,15 @@ const EstoqueService = (() => {
     set('epCusto', prod.custoUn);
     set('epQtd',   prod.qtdUn);
     renderPackList('epPackList', _epPacks);
+
+    // Preencher select de categorias
+    const sel  = Utils.el('epCategoria');
+    if (sel) {
+      const cats = Store.Selectors.getConfig()?.categorias || [];
+      sel.innerHTML = '<option value="">— Sem categoria —</option>' +
+        cats.map(c => `<option value="${c}"${c === (prod.categoria || '') ? ' selected' : ''}>${c}</option>`).join('');
+    }
+
     UIService.openModal('modalEditProd');
   }
 
@@ -825,11 +850,12 @@ const EstoqueService = (() => {
   }
 
   function salvarEdicaoRapida() {
-    const id    = String(Utils.el('epId')?.value || '');
-    const nome  = Utils.el('epNome')?.value.trim() || '';
-    const preco = parseFloat(Utils.el('epPreco')?.value) || 0;
-    const custo = parseFloat(Utils.el('epCusto')?.value) || 0;
-    const qtd   = parseInt(Utils.el('epQtd')?.value)     || 0;
+    const id       = String(Utils.el('epId')?.value || '');
+    const nome     = Utils.el('epNome')?.value.trim() || '';
+    const preco    = parseFloat(Utils.el('epPreco')?.value) || 0;
+    const custo    = parseFloat(Utils.el('epCusto')?.value) || 0;
+    const qtd      = parseInt(Utils.el('epQtd')?.value)     || 0;
+    const categoria = Utils.el('epCategoria')?.value || '';
 
     const validation = Validators.validateProduct({ nome, precoUn: preco, custoUn: custo, qtdUn: qtd });
     if (!validation.valid) { UIService.showToast('Erro', validation.errors[0], 'error'); return; }
@@ -837,7 +863,7 @@ const EstoqueService = (() => {
     Store.mutate(state => {
       const idx = state.estoque.findIndex(p => String(p.id) === id);
       if (idx !== -1)
-        state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, packs: [..._epPacks] };
+        state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._epPacks] };
     }, true);
     SyncService.persist();
     UIService.closeModal('modalEditProd');
@@ -882,8 +908,9 @@ const EstoqueService = (() => {
 
     const frag = document.createDocumentFragment();
     filtrado.forEach(p => {
+      const thresh     = Store.Selectors.getConfig()?.alertaStock ?? CONSTANTS.LOW_STOCK_THRESHOLD;
       const esgotado   = p.qtdUn <= 0;
-      const baixo      = !esgotado && p.qtdUn <= CONSTANTS.LOW_STOCK_THRESHOLD;
+      const baixo      = !esgotado && p.qtdUn <= thresh;
       const stockCls   = esgotado ? 'text-red-400' : baixo ? 'text-amber-400' : 'text-emerald-400';
       const margem     = p.precoUn > 0 ? ((1 - p.custoUn / p.precoUn) * 100).toFixed(0) : 0;
 
@@ -893,6 +920,7 @@ const EstoqueService = (() => {
           <div class="flex justify-between items-start mb-3">
             <div class="min-w-0 flex-1">
               <h3 class="text-[11px] font-black text-slate-200 truncate">${RenderService._escapeHtml(p.nome)}</h3>
+              ${p.categoria ? `<span class="inline-block text-[7px] font-black uppercase tracking-wide bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full mb-0.5">${RenderService._escapeHtml(p.categoria)}</span>` : ''}
               <p class="text-sm font-black text-white mt-0.5">${Utils.formatCurrency(p.precoUn)}</p>
               <p class="text-[8px] font-bold ${stockCls} mt-0.5">${esgotado ? 'Esgotado' : baixo ? `⚠ ${p.qtdUn} restante(s)` : `${p.qtdUn} em estoque`}</p>
             </div>
