@@ -1085,6 +1085,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 class="px-3 py-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white text-[10px] font-black uppercase transition-all">
                 <i class="fas fa-pen text-[9px] mr-1"></i>Renomear
               </button>
+              <button onclick="cmdExcluirComanda()"
+                class="px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-[10px] font-black uppercase transition-all active:scale-95">
+                <i class="fas fa-trash text-[9px] mr-1"></i>Excluir
+              </button>
               <button id="btnCmdFechar" onclick="cmdAbrirFechamento()" disabled
                 class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-white text-[10px] font-black uppercase transition-all active:scale-95">
                 <i class="fas fa-check mr-1"></i>Fechar Conta
@@ -1508,7 +1512,187 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 </div>
 
-<!-- Firebase e Sync -->
+<!-- ═══ MODAL AUTORIZAÇÃO ADM — POR AÇÃO ═══ -->
+<div id="modalAdmAuth" class="modal" aria-modal="true" role="dialog">
+  <div class="modal-box max-w-xs p-0 overflow-hidden">
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <h3 class="text-sm font-black text-amber-400 flex items-center gap-2">
+        <i class="fas fa-shield-alt"></i> Autorização ADM
+      </h3>
+      <button onclick="admAuthCancelar()" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center">
+        <i class="fas fa-times text-xs"></i>
+      </button>
+    </div>
+
+    <!-- Vista: Escolha do método -->
+    <div id="admAuthVEscolha" class="p-6 space-y-3">
+      <div class="bg-amber-500/8 border border-amber-500/20 rounded-2xl p-4 text-center mb-1">
+        <i class="fas fa-lock text-amber-400 text-2xl mb-2 block"></i>
+        <p id="admAuthAvisoAcao" class="text-[11px] font-bold text-amber-300">Esta ação requer</p>
+        <p class="text-[11px] font-bold text-amber-300">autorização do Administrador</p>
+      </div>
+      <button onclick="admAuthModo('pin')"
+        class="w-full py-4 rounded-2xl bg-blue-600/15 border border-blue-500/25 hover:bg-blue-600/25 transition-all flex items-center gap-3 px-4">
+        <i class="fas fa-keyboard text-base text-blue-400 w-6 text-center"></i>
+        <div class="text-left">
+          <p class="text-[11px] font-black text-white">ADM está presente</p>
+          <p class="text-[9px] text-slate-400 font-bold">Digita o PIN aqui mesmo</p>
+        </div>
+        <i class="fas fa-chevron-right text-slate-600 ml-auto text-xs"></i>
+      </button>
+      <button onclick="admAuthModo('remoto')"
+        class="w-full py-4 rounded-2xl bg-emerald-600/15 border border-emerald-500/25 hover:bg-emerald-600/25 transition-all flex items-center gap-3 px-4">
+        <i class="fab fa-whatsapp text-base text-emerald-400 w-6 text-center"></i>
+        <div class="text-left">
+          <p class="text-[11px] font-black text-white">ADM está remoto</p>
+          <p class="text-[9px] text-slate-400 font-bold">Recebe código pelo WhatsApp</p>
+        </div>
+        <i class="fas fa-chevron-right text-slate-600 ml-auto text-xs"></i>
+      </button>
+    </div>
+
+    <!-- Vista: PIN direto -->
+    <div id="admAuthVPin" class="p-6 space-y-4 hidden">
+      <button onclick="admAuthVolta()" class="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 font-bold transition-colors">
+        <i class="fas fa-arrow-left text-[9px]"></i> Voltar
+      </button>
+      <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest block">PIN do Administrador</label>
+      <input type="password" id="admAuthPin" class="inp w-full text-center text-2xl font-black tracking-widest"
+        placeholder="••••••" maxlength="6" inputmode="numeric"
+        oninput="admAuthCheckPin(this.value)"
+        onkeydown="if(event.key==='Enter') admAuthConfirmarPin()">
+      <p id="admAuthErro" class="text-[10px] text-red-400 font-bold text-center hidden"></p>
+      <button onclick="admAuthConfirmarPin()" id="btnAdmAuthPin"
+        class="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black uppercase text-xs tracking-wide transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+        <i class="fas fa-unlock mr-1"></i>Confirmar
+      </button>
+    </div>
+
+    <!-- Vista: Código Remoto -->
+    <div id="admAuthVRemoto" class="p-6 space-y-4 hidden">
+      <button onclick="admAuthVolta()" class="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 font-bold transition-colors">
+        <i class="fas fa-arrow-left text-[9px]"></i> Voltar
+      </button>
+
+      <!-- Passo 1: gerar e enviar código de solicitação -->
+      <div id="admAuthGerarBox">
+        <div class="bg-slate-900/60 border border-white/5 rounded-2xl p-4 mb-3">
+          <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-1">Como funciona</p>
+          <p class="text-[10px] text-slate-400 font-bold leading-relaxed">
+            1. Gere um código de solicitação<br>
+            2. Envie ao ADM pelo WhatsApp<br>
+            3. ADM gera o código de autorização<br>
+            4. Digite o código que o ADM enviar
+          </p>
+        </div>
+        <button onclick="admAuthGerarSolicitacao()"
+          class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2">
+          <i class="fab fa-whatsapp"></i> Gerar solicitação e enviar ao ADM
+        </button>
+      </div>
+
+      <!-- Passo 2: aguardar e digitar o código de autorização do ADM -->
+      <div id="admAuthCodigoBox" class="hidden space-y-3">
+        <div class="bg-blue-500/8 border border-blue-500/20 rounded-2xl p-4 text-center">
+          <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-1">Código de solicitação enviado</p>
+          <p class="text-[9px] text-slate-400 font-bold mb-2">Aguarde o ADM gerar e enviar o código de autorização</p>
+          <div class="inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black px-3 py-1 rounded-full">
+            <i class="fas fa-clock text-[9px]"></i>
+            <span id="admAuthTimerVal">10:00</span>
+          </div>
+        </div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest block">Código de autorização do ADM</label>
+        <input type="text" id="admAuthCodigo" class="inp w-full text-center text-3xl font-black tracking-[0.4em]"
+          placeholder="------" maxlength="6" inputmode="numeric"
+          oninput="admAuthCheckCodigo(this.value)"
+          onkeydown="if(event.key==='Enter') admAuthConfirmarCodigo()">
+        <p id="admAuthCodigoErro" class="text-[10px] text-red-400 font-bold text-center hidden"></p>
+        <button onclick="admAuthConfirmarCodigo()" id="btnAdmAuthCodigo"
+          class="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black uppercase text-xs tracking-wide transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+          <i class="fas fa-check mr-1"></i>Confirmar código
+        </button>
+        <button onclick="admAuthNovasSolicitacao()" class="w-full text-center text-[9px] text-slate-600 hover:text-slate-400 font-bold transition-colors mt-1">
+          Gerar nova solicitação
+        </button>
+      </div>
+    </div>
+
+    <div class="p-4 border-t border-white/5">
+      <button onclick="admAuthCancelar()" class="w-full py-2.5 rounded-xl bg-slate-800 text-slate-400 font-black uppercase text-xs transition-all">
+        Cancelar
+      </button>
+    </div>
+  </div>
+</div>
+<!-- ═══ FERRAMENTA ADM — GERAR CÓDIGO DE AUTORIZAÇÃO ═══ -->
+<div id="modalAdmTool" class="modal" aria-modal="true" role="dialog">
+  <div class="modal-box max-w-xs p-0 overflow-hidden">
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <h3 class="text-sm font-black text-violet-400 flex items-center gap-2">
+        <i class="fas fa-key"></i> Gerar Autorização
+      </h3>
+      <button onclick="UIService.closeModal('modalAdmTool')" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center">
+        <i class="fas fa-times text-xs"></i>
+      </button>
+    </div>
+    <div class="p-6 space-y-4">
+      <div class="bg-violet-500/8 border border-violet-500/20 rounded-2xl p-4">
+        <p class="text-[10px] text-slate-400 font-bold leading-relaxed">
+          O colaborador enviou um <strong class="text-white">código de solicitação</strong>.<br>
+          Digite-o abaixo com seu PIN para gerar o <strong class="text-violet-300">código de autorização</strong>.
+        </p>
+      </div>
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Código de solicitação</label>
+        <input type="text" id="admToolSolicitacao"
+          class="inp w-full text-center text-3xl font-black tracking-[0.4em]"
+          placeholder="------" maxlength="6" inputmode="numeric"
+          oninput="admToolCheck()">
+      </div>
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Seu PIN de administrador</label>
+        <input type="password" id="admToolPin"
+          class="inp w-full text-center text-2xl font-black tracking-widest"
+          placeholder="••••••" maxlength="6" inputmode="numeric"
+          oninput="admToolCheck()"
+          onkeydown="if(event.key==='Enter') admToolGerar()">
+      </div>
+      <button onclick="admToolGerar()" id="btnAdmToolGerar"
+        class="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black uppercase text-xs tracking-wide transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+        <i class="fas fa-magic mr-1"></i>Gerar código de autorização
+      </button>
+      <div id="admToolResultado" class="hidden">
+        <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5 text-center">
+          <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-2">Envie este código ao colaborador</p>
+          <p id="admToolCodigoGerado" class="text-4xl font-black text-emerald-400 tracking-[0.3em] mb-3">------</p>
+          <div class="flex gap-2 justify-center">
+            <button onclick="admToolCopiar()"
+              class="inline-flex items-center gap-2 bg-slate-700/60 border border-white/10 text-slate-300 font-black text-xs uppercase px-4 py-2 rounded-xl hover:bg-slate-700 transition-all">
+              <i class="fas fa-copy"></i> Copiar
+            </button>
+            <button onclick="admToolEnviarWhatsApp()"
+              class="inline-flex items-center gap-2 bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 font-black text-xs uppercase px-4 py-2 rounded-xl hover:bg-emerald-600/30 transition-all">
+              <i class="fab fa-whatsapp"></i> WhatsApp
+            </button>
+          </div>
+        </div>
+        <p class="text-[9px] text-slate-600 text-center font-bold mt-2">
+          <i class="fas fa-clock mr-1"></i>Válido por 10 minutos · uso único
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Botão flutuante ADM (só aparece para quem é admin) -->
+<div id="admToolFab" class="fixed bottom-20 right-4 z-40 hidden">
+  <button onclick="admToolAbrir()"
+    class="w-12 h-12 rounded-2xl bg-violet-600 hover:bg-violet-500 shadow-lg shadow-violet-900/40 flex items-center justify-center transition-all active:scale-95"
+    title="Gerar código de autorização para colaborador">
+    <i class="fas fa-key text-white"></i>
+  </button>
+</div>
+
 <script type="module" src="firebase.js"></script>
 <script type="module" src="sync.js"></script>
 
@@ -1522,6 +1706,399 @@ document.addEventListener('DOMContentLoaded', () => {
 <script src="app-delivery.js"></script>
 <script src="app-ponto.js"></script>
 <script src="app-comanda.js"></script>
+
+<!-- ═══ SISTEMA ADM AUTH — POR AÇÃO ═══ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ════════════════════════════════════════════════════════
+     GUARD — pede autorização para cada ação individualmente
+     _guard(label, callback)
+  ════════════════════════════════════════════════════════ */
+  let _cbPendente  = null;
+  let _acaoPendente = null;
+  let _pinAttempts  = 0;
+  let _tokenExpiry  = 0;
+  let _tokenInterval = null;
+  const MAX_PIN    = 5;
+  const TOKEN_MS   = 10 * 60_000;
+
+  function _guard(label, cb) {
+    if (AuthService.isAdmin()) { cb(); return; }
+    _acaoPendente = label;
+    _cbPendente   = cb;
+    _pinAttempts  = 0;
+    _resetVistas();
+    const avisoEl = document.getElementById('admAuthAvisoAcao');
+    if (avisoEl) avisoEl.textContent = '"' + label + '" requer';
+    // Se já há solicitação activa, vai directo para o passo 2
+    if (_codigoSolicitacao && Date.now() < _tokenExpiry) {
+      document.getElementById('admAuthVEscolha')?.classList.add('hidden');
+      document.getElementById('admAuthVRemoto')?.classList.remove('hidden');
+      document.getElementById('admAuthGerarBox')?.classList.add('hidden');
+      document.getElementById('admAuthCodigoBox')?.classList.remove('hidden');
+      setTimeout(() => document.getElementById('admAuthCodigo')?.focus(), 200);
+    }
+    UIService.openModal('modalAdmAuth');
+  }
+
+  /* ════════════════════════════════════════════════════════
+     PATCH — só as ações que precisam de proteção
+  ════════════════════════════════════════════════════════ */
+  const _orig = {};
+
+  function _patchWhenReady() {
+    const needed = ['cmdAbrirFechamento', 'cmdNova', 'confirmarExclusaoVenda'];
+    if (!needed.every(fn => typeof window[fn] === 'function')) {
+      setTimeout(_patchWhenReady, 80); return;
+    }
+
+    _orig.cmdAbrirFechamento = window.cmdAbrirFechamento;
+    window.cmdAbrirFechamento = () => _guard('Encerrar Comanda', _orig.cmdAbrirFechamento);
+
+    _orig.cmdNova = window.cmdNova;
+    window.cmdNova = () => _guard('Nova Comanda', _orig.cmdNova);
+
+    _orig.confirmarExclusaoVenda = window.confirmarExclusaoVenda;
+    window.confirmarExclusaoVenda = (devolve) =>
+      _guard('Excluir Venda', () => _orig.confirmarExclusaoVenda(devolve));
+  }
+
+  // Excluir comanda (botão próprio)
+  window.cmdExcluirComanda = function () {
+    _guard('Excluir Comanda', _executarExclusaoComanda);
+  };
+
+  function _executarExclusaoComanda() {
+    const cmdId = window._cmdAtualId || window.cmdAtualId;
+    if (!cmdId) { UIService.showToast('Erro', 'Comanda não identificada', 'error'); return; }
+    Store.mutate(state => {
+      const idx = (state.comandas || []).findIndex(c => String(c.id) === String(cmdId));
+      if (idx !== -1) state.comandas.splice(idx, 1);
+    });
+    SyncService.persistNow();
+    if (typeof cmdVoltarLista === 'function') cmdVoltarLista();
+    if (typeof renderComandas === 'function') renderComandas();
+    UIService.showToast('Comanda excluída', '', 'warning');
+  }
+
+  /* ════════════════════════════════════════════════════════
+     MODAL
+  ════════════════════════════════════════════════════════ */
+  function _resetVistas() {
+    ['admAuthVEscolha','admAuthVPin','admAuthVRemoto'].forEach(id =>
+      document.getElementById(id)?.classList.add('hidden'));
+    document.getElementById('admAuthVEscolha')?.classList.remove('hidden');
+    const pinEl = document.getElementById('admAuthPin');
+    if (pinEl) pinEl.value = '';
+    document.getElementById('admAuthErro')?.classList.add('hidden');
+    const btnPin = document.getElementById('btnAdmAuthPin');
+    if (btnPin) btnPin.disabled = true;
+    document.getElementById('admAuthGerarBox')?.classList.remove('hidden');
+    document.getElementById('admAuthCodigoBox')?.classList.add('hidden');
+    document.getElementById('admAuthCodigoErro')?.classList.add('hidden');
+    const codEl = document.getElementById('admAuthCodigo');
+    if (codEl) codEl.value = '';
+    const btnCod = document.getElementById('btnAdmAuthCodigo');
+    if (btnCod) btnCod.disabled = true;
+    // NÃO limpa _codigoSolicitacao nem para o timer — código permanece válido 10min
+  }
+
+  window.admAuthModo = function (modo) {
+    document.getElementById('admAuthVEscolha')?.classList.add('hidden');
+    if (modo === 'pin') {
+      document.getElementById('admAuthVPin')?.classList.remove('hidden');
+      setTimeout(() => document.getElementById('admAuthPin')?.focus(), 200);
+    } else {
+      document.getElementById('admAuthVRemoto')?.classList.remove('hidden');
+    }
+  };
+
+  window.admAuthNovasSolicitacao = function () {
+    _codigoSolicitacao = '';
+    _tokenExpiry = 0;
+    _stopTokenTimer();
+    document.getElementById('admAuthCodigoBox')?.classList.add('hidden');
+    document.getElementById('admAuthGerarBox')?.classList.remove('hidden');
+  };
+
+  window.admAuthVolta    = () => _resetVistas();
+  window.admAuthCancelar = () => {
+    UIService.closeModal('modalAdmAuth');
+    _cbPendente = null;
+    // Timer e código continuam válidos — colaborador pode reabrir e digitar
+  };
+
+  /* ── PIN direto ─────────────────────────────────────── */
+  window.admAuthCheckPin = function (val) {
+    const btn = document.getElementById('btnAdmAuthPin');
+    if (btn) btn.disabled = String(val).trim().length < 3;
+    document.getElementById('admAuthErro')?.classList.add('hidden');
+  };
+
+  window.admAuthConfirmarPin = async function () {
+    if (_pinAttempts >= MAX_PIN) {
+      UIService.showToast('Bloqueado', 'Muitas tentativas.', 'error');
+      UIService.closeModal('modalAdmAuth'); return;
+    }
+    const pin = (document.getElementById('admAuthPin')?.value || '').trim();
+    if (!pin) return;
+    const role = await CryptoService.validatePin(pin);
+    if (role === 'admin') { _sucesso(); }
+    else {
+      _pinAttempts++;
+      const rest = MAX_PIN - _pinAttempts;
+      const el = document.getElementById('admAuthErro');
+      if (el) {
+        el.textContent = rest > 0
+          ? 'PIN incorreto. ' + rest + ' tentativa(s).'
+          : 'Bloqueado. Recarregue a página.';
+        el.classList.remove('hidden');
+      }
+      const pinEl = document.getElementById('admAuthPin');
+      if (pinEl) { pinEl.value = ''; pinEl.focus(); }
+      document.getElementById('btnAdmAuthPin').disabled = true;
+      _shake();
+    }
+  };
+
+  /* ── Código remoto ──────────────────────────────────── */
+  /* ════════════════════════════════════════════════════════
+     DERIVAÇÃO — código de autorização a partir do código
+     de solicitação + hash do PIN do ADM (Web Crypto)
+     authCode = SHA-256(solicitacao + "|" + pinHash)
+                → primeiros 6 dígitos decimais
+  ════════════════════════════════════════════════════════ */
+  async function _derivarAuthCode(solicitacao, pinHash) {
+    const raw  = solicitacao + '|' + pinHash;
+    const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+    const arr  = new Uint8Array(buf);
+    const num  = ((arr[0] << 16) | (arr[1] << 8) | arr[2]) % 1_000_000;
+    return String(num).padStart(6, '0');
+  }
+
+  /* ── Código de solicitação (gerado pelo colaborador) ─── */
+  let _codigoSolicitacao = '';
+
+  window.admAuthGerarSolicitacao = function () {
+    const config = Store.Selectors.getConfig() || {};
+    const zapNum = (config.whatsapp || '').replace(/\D/g, '');
+    if (!zapNum) {
+      UIService.showToast('WhatsApp não configurado', 'ADM precisa cadastrar o número em ⚙️ Configurações', 'error');
+      return;
+    }
+    // Gera código de solicitação — pode ser visto pelo colaborador, não tem poder
+    _codigoSolicitacao = String(Math.floor(100000 + Math.random() * 900000));
+    _tokenExpiry = Date.now() + TOKEN_MS;
+
+    const nome = config.nome || 'CH Geladas PDV';
+    const hora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    const msg  =
+      '🔐 *' + nome + ' — Solicitação de Autorização*\n\n' +
+      '⏰ Solicitado às ' + hora + '\n' +
+      'Ação: *' + (_acaoPendente || 'operação') + '*\n\n' +
+      'Código de solicitação:\n\n' +
+      '┌─────────────────┐\n│   *' + _codigoSolicitacao + '*   │\n└─────────────────┘\n\n' +
+      '⏳ Gere o código de autorização no app e envie de volta.\n' +
+      '_Ignore se não foi você._';
+
+    Utils.openWhatsApp(zapNum, msg);
+
+    document.getElementById('admAuthGerarBox')?.classList.add('hidden');
+    document.getElementById('admAuthCodigoBox')?.classList.remove('hidden');
+    setTimeout(() => document.getElementById('admAuthCodigo')?.focus(), 200);
+    _startTokenTimer();
+  };
+
+  window.admAuthCheckCodigo = function (val) {
+    const btn = document.getElementById('btnAdmAuthCodigo');
+    if (btn) btn.disabled = String(val).trim().length < 6;
+    document.getElementById('admAuthCodigoErro')?.classList.add('hidden');
+  };
+
+  window.admAuthConfirmarCodigo = async function () {
+    const cod = (document.getElementById('admAuthCodigo')?.value || '').trim();
+    if (!cod) return;
+
+    if (!_codigoSolicitacao || Date.now() > _tokenExpiry) {
+      const el = document.getElementById('admAuthCodigoErro');
+      if (el) { el.textContent = 'Solicitação expirada. Gere uma nova.'; el.classList.remove('hidden'); }
+      _stopTokenTimer();
+      document.getElementById('admAuthCodigoBox')?.classList.add('hidden');
+      document.getElementById('admAuthGerarBox')?.classList.remove('hidden');
+      _codigoSolicitacao = ''; return;
+    }
+
+    try {
+      // Testa contra todos os hashes possíveis do PIN admin
+      const config = Store.Selectors.getConfig() || {};
+      const hashes = [
+        config.pinHashAdmin,                                           // PIN customizado
+        '7a3e6b16cb75f48fb897eff3ae732f3154f6d203b53f33660f01b4c3b6bc2df9' // sha256("001") padrão
+      ].filter(h => h && h.length > 0);
+
+      let autorizado = false;
+      for (const hash of hashes) {
+        const esperado = await _derivarAuthCode(_codigoSolicitacao, hash);
+        if (cod === esperado) { autorizado = true; break; }
+      }
+
+      if (autorizado) {
+        _codigoSolicitacao = '';
+        _stopTokenTimer();
+        _sucesso();
+      } else {
+        const el = document.getElementById('admAuthCodigoErro');
+        if (el) { el.textContent = 'Código incorreto. Peça ao ADM para reenviar.'; el.classList.remove('hidden'); }
+        const codEl = document.getElementById('admAuthCodigo');
+        if (codEl) { codEl.value = ''; codEl.focus(); }
+        document.getElementById('btnAdmAuthCodigo').disabled = true;
+        _shake();
+      }
+    } catch (err) {
+      UIService.showToast('Erro interno', err.message || String(err), 'error');
+      console.error('[admAuthConfirmarCodigo]', err);
+    }
+  };
+
+  /* ════════════════════════════════════════════════════════
+     FERRAMENTA ADM — gera o código de autorização
+  ════════════════════════════════════════════════════════ */
+  let _admToolAuthCode = '';
+  let _admToolWapNum   = '';
+
+  // Mostra o botão flutuante apenas para ADM
+  function _initAdmFab() {
+    const fab = document.getElementById('admToolFab');
+    if (!fab) return;
+    if (AuthService.isAdmin()) fab.classList.remove('hidden');
+    else fab.classList.add('hidden');
+  }
+  // Re-verifica após login
+  EventBus.on('LOGIN_SUCCESS', _initAdmFab);
+  EventBus.on('LOGOUT',        () => document.getElementById('admToolFab')?.classList.add('hidden'));
+  setTimeout(_initAdmFab, 500);
+
+  window.admToolAbrir = function () {
+    document.getElementById('admToolSolicitacao').value = '';
+    document.getElementById('admToolPin').value         = '';
+    document.getElementById('admToolResultado')?.classList.add('hidden');
+    document.getElementById('btnAdmToolGerar').disabled = true;
+    _admToolAuthCode = '';
+    UIService.openModal('modalAdmTool');
+    setTimeout(() => document.getElementById('admToolSolicitacao')?.focus(), 200);
+  };
+
+  window.admToolCheck = function () {
+    const sol = (document.getElementById('admToolSolicitacao')?.value || '').trim();
+    const pin = (document.getElementById('admToolPin')?.value        || '').trim();
+    const btn = document.getElementById('btnAdmToolGerar');
+    if (btn) btn.disabled = sol.length < 6 || pin.length < 3;
+    document.getElementById('admToolResultado')?.classList.add('hidden');
+  };
+
+  window.admToolGerar = async function () {
+    const sol = (document.getElementById('admToolSolicitacao')?.value || '').trim();
+    const pin = (document.getElementById('admToolPin')?.value        || '').trim();
+    if (!sol || !pin) return;
+
+    try {
+      // Valida o PIN primeiro
+      const role = await CryptoService.validatePin(pin);
+      if (role !== 'admin') {
+        UIService.showToast('PIN inválido', 'Insira o PIN correto de administrador', 'error');
+        document.getElementById('admToolPin').value = '';
+        document.getElementById('admToolPin').focus();
+        return;
+      }
+
+      // Deriva o código de autorização a partir do hash do PIN digitado
+      const pinHash = await CryptoService.sha256(pin);
+      _admToolAuthCode = await _derivarAuthCode(sol, pinHash);
+
+      // Número do WhatsApp do colaborador para envio directo
+      const cfg = Store.Selectors.getConfig() || {};
+      _admToolWapNum = (cfg.whatsappColaborador || '').replace(/\D/g, '');
+
+      // Mostra o código de autorização para o ADM
+      const resultEl = document.getElementById('admToolResultado');
+      const codEl    = document.getElementById('admToolCodigoGerado');
+      if (codEl)    codEl.textContent = _admToolAuthCode;
+      if (resultEl) resultEl.classList.remove('hidden');
+
+    } catch (err) {
+      UIService.showToast('Erro ao gerar código', err.message || String(err), 'error');
+      console.error('[admToolGerar]', err);
+    }
+  };
+
+  window.admToolCopiar = function () {
+    if (!_admToolAuthCode) return;
+    navigator.clipboard.writeText(_admToolAuthCode)
+      .then(() => UIService.showToast('Copiado!', _admToolAuthCode, 'success'))
+      .catch(() => UIService.showToast('Erro', 'Não foi possível copiar', 'error'));
+  };
+
+  window.admToolEnviarWhatsApp = function () {
+    if (!_admToolAuthCode) return;
+    const config = Store.Selectors.getConfig() || {};
+    const nome   = config.nome || 'CH Geladas PDV';
+    const hora   = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    const msg    =
+      '✅ *' + nome + ' — Código de Autorização*\n\n' +
+      '⏰ ' + hora + '\n\n' +
+      '┌─────────────────┐\n│   *' + _admToolAuthCode + '*   │\n└─────────────────┘\n\n' +
+      '⏳ Válido por 10 minutos · uso único.';
+
+    if (_admToolWapNum) Utils.openWhatsApp(_admToolWapNum, msg);
+    else UIService.showToast('Sem número do colaborador', 'Copie o código e envie manualmente', 'warning');
+  };
+
+  function _startTokenTimer() {
+    _stopTokenTimer();
+    _tokenInterval = setInterval(() => {
+      const rest = Math.max(0, _tokenExpiry - Date.now());
+      const min  = Math.floor(rest / 60_000);
+      const sec  = Math.floor((rest % 60_000) / 1000);
+      const el   = document.getElementById('admAuthTimerVal');
+      if (el) el.textContent = min + ':' + String(sec).padStart(2,'0');
+      if (rest <= 0) {
+        _stopTokenTimer(); _codigoSolicitacao = '';
+        const erEl = document.getElementById('admAuthCodigoErro');
+        if (erEl) { erEl.textContent = 'Código expirado. Gere um novo.'; erEl.classList.remove('hidden'); }
+        document.getElementById('admAuthCodigoBox')?.classList.add('hidden');
+        document.getElementById('admAuthGerarBox')?.classList.remove('hidden');
+      }
+    }, 1000);
+  }
+  function _stopTokenTimer() {
+    if (_tokenInterval) { clearInterval(_tokenInterval); _tokenInterval = null; }
+  }
+
+  /* ── Sucesso ────────────────────────────────────────── */
+  function _sucesso() {
+    _stopTokenTimer();
+    UIService.closeModal('modalAdmAuth');
+    UIService.showToast('Autorizado ✓', _acaoPendente, 'success');
+    const cb = _cbPendente;
+    _cbPendente = null; _acaoPendente = null;
+    setTimeout(() => cb && cb(), 280);
+  }
+
+  function _shake() {
+    const box = document.querySelector('#modalAdmAuth .modal-box');
+    if (!box) return;
+    box.style.transition = 'transform .08s';
+    box.style.transform  = 'translateX(-7px)';
+    setTimeout(() => { box.style.transform = 'translateX(7px)';  }, 80);
+    setTimeout(() => { box.style.transform = 'translateX(-4px)'; }, 160);
+    setTimeout(() => { box.style.transform = 'translateX(0)';    }, 240);
+  }
+
+  _patchWhenReady();
+})();
+</script>
 
 <!-- ═══════════════ Service Worker ═══════════════ -->
 <script>
@@ -1608,6 +2185,27 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
     <div class="p-6 space-y-6 overflow-y-auto scroll" style="max-height:75vh">
 
+      <!-- WhatsApp -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-emerald-400 font-black mb-3">📱 WhatsApp</p>
+        <div class="grid grid-cols-1 gap-3">
+          <div>
+            <label class="label">Número do ADM <span class="text-slate-600">(para receber alertas e solicitações)</span></label>
+            <div class="flex items-center gap-2">
+              <span class="text-slate-500 text-sm font-bold flex-shrink-0">+55</span>
+              <input type="tel" id="cfgWhatsappAdm" class="inp flex-1" placeholder="11999999999" inputmode="numeric">
+            </div>
+          </div>
+          <div>
+            <label class="label">Número do Colaborador <span class="text-slate-600">(para receber código de autorização)</span></label>
+            <div class="flex items-center gap-2">
+              <span class="text-slate-500 text-sm font-bold flex-shrink-0">+55</span>
+              <input type="tel" id="cfgWhatsappColab" class="inp flex-1" placeholder="11999999999" inputmode="numeric">
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Estabelecimento -->
       <section>
         <p class="text-[9px] uppercase tracking-widest text-blue-400 font-black mb-3">🏪 Estabelecimento</p>
@@ -1666,6 +2264,21 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div id="cfgCatList" class="space-y-2 min-h-[32px]"></div>
         <p class="text-[10px] text-slate-500 mt-2">As categorias aparecem como filtros no catálogo PDV e no campo de edição de produto.</p>
+      </section>
+
+      <!-- Ferramenta ADM — só aparece para admins -->
+      <section id="cfgSecAdmTool" class="hidden">
+        <p class="text-[9px] uppercase tracking-widest text-violet-400 font-black mb-3">🔑 Autorização Remota</p>
+        <div class="bg-violet-500/8 border border-violet-500/20 rounded-2xl p-4 mb-3">
+          <p class="text-[10px] text-slate-400 font-bold leading-relaxed">
+            Colaborador enviou um código de solicitação pelo WhatsApp?<br>
+            Clique abaixo para gerar o código de autorização.
+          </p>
+        </div>
+        <button onclick="UIService.closeModal('modalConfig'); admToolAbrir();"
+          class="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2">
+          <i class="fas fa-key"></i> Gerar código de autorização
+        </button>
       </section>
 
       <!-- Anthropic API Key -->

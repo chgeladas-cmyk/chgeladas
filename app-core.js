@@ -1745,13 +1745,16 @@ function setCatFilter(cat) { RenderService.setCatFilter(cat); }
 function abrirConfig() {
   const cfg = Store.Selectors.getConfig();
   const el  = id => Utils.el(id);
-  if (el('cfgNome'))     el('cfgNome').value    = cfg.nome || '';
-  if (el('cfgAlerta'))   el('cfgAlerta').value  = cfg.alertaStock ?? 3;
-  if (el('cfgTgToken'))  el('cfgTgToken').value = cfg.telegram?.token  || '';
-  if (el('cfgTgChatId')) el('cfgTgChatId').value= cfg.telegram?.chatId || '';
-  if (el('cfgPinAdm'))   el('cfgPinAdm').value  = '';
-  if (el('cfgPinColab')) el('cfgPinColab').value = '';
-  if (el('cfgApiKey'))   el('cfgApiKey').value   = cfg.anthropicApiKey || '';
+  if (el('cfgNome'))           el('cfgNome').value           = cfg.nome || '';
+  if (el('cfgAlerta'))         el('cfgAlerta').value         = cfg.alertaStock ?? 3;
+  if (el('cfgTgToken'))        el('cfgTgToken').value        = cfg.telegram?.token  || '';
+  if (el('cfgTgChatId'))       el('cfgTgChatId').value       = cfg.telegram?.chatId || '';
+  if (el('cfgPinAdm'))         el('cfgPinAdm').value         = '';
+  if (el('cfgPinColab'))       el('cfgPinColab').value       = '';
+  if (el('cfgApiKey'))         el('cfgApiKey').value         = cfg.anthropicApiKey  || '';
+  if (el('cfgWhatsappAdm'))    el('cfgWhatsappAdm').value    = cfg.whatsapp              || '';
+  if (el('cfgWhatsappColab'))  el('cfgWhatsappColab').value  = cfg.whatsappColaborador   || '';
+  if (el('cfgSecAdmTool')) el('cfgSecAdmTool').classList.toggle('hidden', !AuthService.isAdmin());
   _renderCfgCategorias();
   UIService.openModal('modalConfig');
 }
@@ -1800,13 +1803,15 @@ function removeCfgCategoria(idx) {
 /** Guarda todas as configurações */
 async function salvarConfig() {
   const cfg    = { ...Store.Selectors.getConfig() };
-  const nome   = (Utils.el('cfgNome')?.value   || '').trim();
+  const nome   = (Utils.el('cfgNome')?.value         || '').trim();
   const alerta = parseInt(Utils.el('cfgAlerta')?.value) || 3;
-  const tgTok  = (Utils.el('cfgTgToken')?.value || '').trim();
-  const tgCid  = (Utils.el('cfgTgChatId')?.value|| '').trim();
-  const pinA   = (Utils.el('cfgPinAdm')?.value  || '').trim();
-  const pinC   = (Utils.el('cfgPinColab')?.value || '').trim();
-  const apiKey = (Utils.el('cfgApiKey')?.value   || '').trim();
+  const tgTok  = (Utils.el('cfgTgToken')?.value       || '').trim();
+  const tgCid  = (Utils.el('cfgTgChatId')?.value      || '').trim();
+  const pinA   = (Utils.el('cfgPinAdm')?.value         || '').trim();
+  const pinC   = (Utils.el('cfgPinColab')?.value       || '').trim();
+  const apiKey = (Utils.el('cfgApiKey')?.value         || '').trim();
+  const zapAdm  = (Utils.el('cfgWhatsappAdm')?.value   || '').replace(/\D/g, '');
+  const zapColab = (Utils.el('cfgWhatsappColab')?.value || '').replace(/\D/g, '');
 
   // Validação dos PINs
   if (pinA && pinA.length < 3) { UIService.showToast('PIN inválido', 'PIN Administrador precisa de mínimo 3 dígitos', 'error'); return; }
@@ -1815,7 +1820,9 @@ async function salvarConfig() {
   cfg.nome        = nome;
   cfg.alertaStock = alerta;
   cfg.telegram    = { token: tgTok, chatId: tgCid };
-  if (apiKey) cfg.anthropicApiKey = apiKey;
+  if (apiKey)  cfg.anthropicApiKey     = apiKey;
+  if (zapAdm)  cfg.whatsapp            = zapAdm;
+  if (zapColab) cfg.whatsappColaborador = zapColab;
   if (pinA) cfg.pinHashAdmin = await CryptoService.sha256(pinA);
   if (pinC) cfg.pinHashPdv   = await CryptoService.sha256(pinC);
 
