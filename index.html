@@ -628,6 +628,9 @@ document.addEventListener('DOMContentLoaded', () => {
     <button class="nav-btn adm" data-tab="inventario" onclick="switchTab('inventario')">
       <i class="fas fa-clipboard-list block text-base mb-1 mx-auto"></i>Inventário
     </button>
+    <button class="nav-btn adm" data-tab="ia" onclick="switchTab('ia')">
+      <i class="fas fa-robot block text-base mb-1"></i>IA
+    </button>
     <button class="nav-btn adm" data-tab="dados" onclick="switchTab('dados')">
       <i class="fas fa-database block text-base mb-1 mx-auto"></i>Dados
     </button>
@@ -1148,6 +1151,11 @@ document.addEventListener('DOMContentLoaded', () => {
     </section>
 
     <!-- DADOS -->
+    <!-- IA TAB -->
+    <section id="tab-ia" class="tab-pane">
+      <div id="iaContainer"><!-- renderizado por renderIA() --></div>
+    </section>
+
     <section id="tab-dados" class="tab-pane">
       <div class="max-w-2xl mx-auto space-y-4">
         <div class="grid grid-cols-3 gap-3">
@@ -1510,6 +1518,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <!-- App -->
 <script src="app-core.js"></script>
 <script src="app-financeiro.js"></script>
+<script src="app-ia.js"></script>
 <script src="app-delivery.js"></script>
 <script src="app-ponto.js"></script>
 <script src="app-comanda.js"></script>

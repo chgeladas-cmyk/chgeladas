@@ -1289,6 +1289,7 @@ const TabManager = (() => {
     ponto:      () => { if (typeof renderPonto      === 'function') renderPonto();      },
     dados:      () => { if (typeof renderDados      === 'function') renderDados();      },
     inventario: () => { if (typeof renderInventario === 'function') renderInventario(); },
+    ia:         () => { if (typeof renderIA         === 'function') renderIA();         },
     comanda:    () => { if (typeof renderComandas   === 'function') renderComandas();   },
     delivery:   () => {
       if (typeof renderDelivery          === 'function') renderDelivery();
