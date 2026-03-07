@@ -418,7 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <p id="vendaResumo" class="text-slate-400 text-sm mb-7">O que deseja fazer?</p>
     </div>
     <div class="grid grid-cols-2 gap-3 mb-4">
-      <button onclick="confirmarPagamento('Dinheiro')" class="flex flex-col items-center gap-2 py-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/25 text-emerald-400 font-black uppercase text-[10px] transition-all">
+      <button onclick="abrirTroco()" class="flex flex-col items-center gap-2 py-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/25 text-emerald-400 font-black uppercase text-[10px] transition-all">
         <i class="fas fa-money-bill-wave text-2xl"></i>Dinheiro
       </button>
       <button onclick="confirmarPagamento('Pix')" class="flex flex-col items-center gap-2 py-5 rounded-2xl bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/25 text-blue-400 font-black uppercase text-[10px] transition-all">
@@ -437,6 +437,48 @@ document.addEventListener('DOMContentLoaded', () => {
     <button onclick="closeModal('modalPagamento');document.getElementById('btnFinalizar').disabled=false;" class="w-full py-3 rounded-xl bg-slate-800 text-slate-400 font-black uppercase text-[10px] transition-all">
       Cancelar
     </button>
+  </div>
+</div>
+
+<!-- ═══ MODAL CALCULADORA DE TROCO ═══ -->
+<div id="modalTroco" class="modal">
+  <div class="modal-box max-w-sm p-0 overflow-hidden">
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <h3 class="text-sm font-black text-emerald-400 flex items-center gap-2">
+        <i class="fas fa-money-bill-wave"></i> Calculadora de Troco
+      </h3>
+      <button onclick="fecharTroco()" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"><i class="fas fa-times text-xs"></i></button>
+    </div>
+    <div class="p-6 space-y-5">
+      <!-- Total a pagar -->
+      <div class="bg-slate-900/80 border border-white/5 rounded-2xl p-4 text-center">
+        <p class="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">Total a Pagar</p>
+        <p id="trocoTotal" class="text-3xl font-black text-white">R$ 0,00</p>
+      </div>
+      <!-- Valor recebido -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Valor Recebido (R$)</label>
+        <input type="number" id="trocoRecebido" class="inp w-full text-2xl font-black text-emerald-400 text-center"
+          placeholder="0,00" step="0.01" min="0" inputmode="decimal"
+          oninput="calcTroco()" onkeydown="if(event.key==='Enter') confirmarTroco()">
+      </div>
+      <!-- Resultado troco -->
+      <div id="trocoResultBox" class="rounded-2xl p-4 text-center hidden">
+        <p class="text-[9px] uppercase font-black tracking-widest mb-1" id="trocoResultLabel">Troco</p>
+        <p id="trocoResultVal" class="text-3xl font-black">R$ 0,00</p>
+      </div>
+      <!-- Sugestões rápidas -->
+      <div>
+        <p class="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-2">Valores Rápidos</p>
+        <div id="trocoSugestoes" class="grid grid-cols-4 gap-2"></div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-white/5 flex gap-3">
+      <button onclick="fecharTroco()" class="flex-1 py-3 rounded-xl bg-slate-800 text-slate-400 font-black uppercase text-xs tracking-wide transition-all">Voltar</button>
+      <button onclick="confirmarTroco()" id="btnConfirmarTroco" class="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-xs tracking-wide transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+        <i class="fas fa-check mr-1"></i>Confirmar
+      </button>
+    </div>
   </div>
 </div>
 
@@ -1617,6 +1659,16 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="text-[10px] text-slate-500 mt-2">As categorias aparecem como filtros no catálogo PDV e no campo de edição de produto.</p>
       </section>
 
+      <!-- Anthropic API Key -->
+      <section>
+        <p class="text-[9px] uppercase tracking-widest text-violet-400 font-black mb-3">🤖 Assistente IA (Claude)</p>
+        <label class="label">Anthropic API Key</label>
+        <input type="password" id="cfgApiKey" class="inp font-mono text-[11px]" placeholder="sk-ant-...">
+        <p class="text-[10px] text-slate-500 mt-2">
+          Obtém a tua chave em <span class="text-violet-400 font-bold">console.anthropic.com</span> → API Keys. Necessária para o Assistente IA funcionar.
+        </p>
+      </section>
+
     </div>
     <div class="p-5 border-t border-white/5 flex gap-3">
       <button onclick="salvarConfig()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-black uppercase text-xs tracking-wide transition-all">💾 Guardar</button>
@@ -1624,6 +1676,117 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 </div>
+<!-- ═══ CALCULADORA DE TROCO ═══ -->
+<script>
+(function() {
+  'use strict';
+
+  // Abre modal de troco com o total atual do carrinho
+  window.abrirTroco = function() {
+    const total = CartService.getTotal();
+    const totalEl = document.getElementById('trocoTotal');
+    if (totalEl) totalEl.textContent = Utils.formatCurrency(total);
+
+    // Limpa campos
+    const recEl = document.getElementById('trocoRecebido');
+    if (recEl) { recEl.value = ''; }
+    const box = document.getElementById('trocoResultBox');
+    if (box) box.classList.add('hidden');
+
+    // Gera sugestões de valores
+    _gerarSugestoes(total);
+
+    // Foca input após animação
+    UIService.closeModal('modalPagamento');
+    UIService.openModal('modalTroco');
+    setTimeout(() => { recEl?.focus(); }, 350);
+  };
+
+  window.fecharTroco = function() {
+    UIService.closeModal('modalTroco');
+    UIService.openModal('modalPagamento');
+  };
+
+  window.calcTroco = function() {
+    const total     = CartService.getTotal();
+    const recebido  = parseFloat(document.getElementById('trocoRecebido')?.value) || 0;
+    const box       = document.getElementById('trocoResultBox');
+    const valEl     = document.getElementById('trocoResultVal');
+    const labelEl   = document.getElementById('trocoResultLabel');
+    const btnConf   = document.getElementById('btnConfirmarTroco');
+
+    if (!box || !valEl) return;
+
+    if (recebido <= 0) { box.classList.add('hidden'); return; }
+
+    box.classList.remove('hidden');
+
+    const troco = recebido - total;
+
+    if (troco < 0) {
+      // Valor insuficiente
+      box.className = 'rounded-2xl p-4 text-center bg-red-500/10 border border-red-500/20';
+      if (labelEl) { labelEl.textContent = 'Falta'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-red-400'; }
+      valEl.textContent = Utils.formatCurrency(Math.abs(troco));
+      valEl.className   = 'text-3xl font-black text-red-400';
+      if (btnConf) btnConf.disabled = true;
+    } else if (troco === 0) {
+      box.className = 'rounded-2xl p-4 text-center bg-blue-500/10 border border-blue-500/20';
+      if (labelEl) { labelEl.textContent = 'Valor Exato!'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-blue-400'; }
+      valEl.textContent = 'Sem troco 👌';
+      valEl.className   = 'text-2xl font-black text-blue-400';
+      if (btnConf) btnConf.disabled = false;
+    } else {
+      box.className = 'rounded-2xl p-4 text-center bg-emerald-500/10 border border-emerald-500/20';
+      if (labelEl) { labelEl.textContent = 'Troco'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-emerald-400'; }
+      valEl.textContent = Utils.formatCurrency(troco);
+      valEl.className   = 'text-3xl font-black text-emerald-400';
+      if (btnConf) btnConf.disabled = false;
+    }
+  };
+
+  window.confirmarTroco = function() {
+    const total    = CartService.getTotal();
+    const recebido = parseFloat(document.getElementById('trocoRecebido')?.value) || 0;
+    if (recebido < total) {
+      UIService.showToast('Valor Insuficiente', 'O valor recebido é menor que o total', 'error');
+      return;
+    }
+    UIService.closeModal('modalTroco');
+    const troco = recebido - total;
+    const desc  = troco > 0 ? ` (Troco: ${Utils.formatCurrency(troco)})` : '';
+    confirmarPagamento(`Dinheiro${desc}`);
+  };
+
+  // Define valor rápido no input
+  window.setSugestao = function(val) {
+    const recEl = document.getElementById('trocoRecebido');
+    if (recEl) { recEl.value = val; calcTroco(); }
+  };
+
+  function _gerarSugestoes(total) {
+    const cont = document.getElementById('trocoSugestoes');
+    if (!cont) return;
+    // Gera 4 notas/valores acima do total
+    const notas  = [2, 5, 10, 20, 50, 100, 200];
+    const sugest = [];
+    for (const n of notas) {
+      if (n >= total) { sugest.push(n); if (sugest.length === 4) break; }
+    }
+    // Se não tiver 4, adiciona múltiplos do valor
+    while (sugest.length < 4) {
+      const last = sugest[sugest.length - 1] || Math.ceil(total / 10) * 10;
+      sugest.push(last + 10);
+    }
+    cont.innerHTML = sugest.map(v =>
+      `<button onclick="setSugestao(${v})"
+        class="py-2 rounded-xl bg-slate-800 hover:bg-emerald-600/20 border border-white/5 hover:border-emerald-500/30 text-white font-black text-xs transition-all active:scale-95">
+        R$ ${v}
+      </button>`
+    ).join('');
+  }
+})();
+</script>
 
 </body>
 </html>

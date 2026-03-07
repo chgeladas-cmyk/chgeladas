@@ -35,7 +35,7 @@ const FIRESTORE_DOC_ID     = 'sistema';
 const FIREBASE_WAIT_MS     = 5_000;   // timeout aguardando Firebase inicializar
 const BACKUP_DEBOUNCE_MS   = 1_500;   // debounce de escrita no Firestore
 const BACKUP_TIMEOUT_MS    = 12_000;  // timeout máximo por operação
-const SNAPSHOT_MIN_GAP_MS  = 2_000;   // ignora snapshots chegando muito rápido (anti-loop)
+const SNAPSHOT_MIN_GAP_MS  = 10_000;  // FIX: aumentado de 2s→10s para proteger saves locais
 
 /* ═══════════════════════════════════════════════════════════════════
    ESTADO INTERNO
@@ -387,6 +387,7 @@ async function _executeBackup() {
  * Múltiplos saves em sequência disparam UMA ÚNICA escrita no Firestore.
  */
 function _scheduleBackup() {
+  _lastLocalSave = Date.now(); // FIX: marca save local IMEDIATAMENTE, não só na execução
   clearTimeout(_backupTimer);
   _backupTimer = setTimeout(_executeBackup, BACKUP_DEBOUNCE_MS);
 }

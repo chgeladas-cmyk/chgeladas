@@ -159,9 +159,19 @@ INSTRUÇÕES:
       ? pergunta
       : `Faz uma análise completa do meu negócio hoje. Identifica os principais problemas, oportunidades e dá-me as top 5 sugestões prioritárias para melhorar o desempenho.`;
 
+    const apiKey = Store.Selectors.getConfig()?.anthropicApiKey || '';
+    if (!apiKey) {
+      throw new Error('Chave da API não configurada. Acede às ⚙️ Configurações e insere a tua API Key da Anthropic.');
+    }
+
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1000,
