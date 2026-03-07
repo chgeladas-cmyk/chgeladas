@@ -276,6 +276,7 @@ const Store = (() => {
     inventario: [],
     caixa:      [],
     comandas:   [],
+    movimentacoes: [],   // entradas e saídas manuais
     investimento: 0,
     config:     { whatsapp: '' },
     delivery:   {
@@ -352,6 +353,7 @@ const Store = (() => {
     if (!Array.isArray(d.vendas))     d.vendas     = [];
     if (!Array.isArray(d.ponto))      d.ponto      = [];
     if (!Array.isArray(d.inventario)) d.inventario = [];
+    if (!Array.isArray(d.movimentacoes)) d.movimentacoes = [];
     if (!Array.isArray(d.caixa))      d.caixa      = [];
     if (!Array.isArray(d.comandas))   d.comandas   = [];
     if (typeof d.investimento !== 'number') d.investimento = 0;
@@ -388,6 +390,7 @@ const Store = (() => {
 
   /** Selectors — acesso tipado e seguro ao estado */
   const Selectors = Object.freeze({
+    getMovimentacoes:  () => _state.movimentacoes,
     getEstoque:        () => _state.estoque,
     getVendas:         () => _state.vendas,
     getPonto:          () => _state.ponto,
@@ -1286,6 +1289,7 @@ const TabManager = (() => {
     vendas:     () => { RenderService.renderCatalogo(); },
     estoque:    () => { if (typeof renderEstoque    === 'function') renderEstoque();    },
     financeiro: () => { if (typeof renderFinanceiro === 'function') renderFinanceiro(); },
+    fluxo:      () => { if (typeof renderFluxo      === 'function') renderFluxo();      },
     ponto:      () => { if (typeof renderPonto      === 'function') renderPonto();      },
     dados:      () => { if (typeof renderDados      === 'function') renderDados();      },
     inventario: () => { if (typeof renderInventario === 'function') renderInventario(); },

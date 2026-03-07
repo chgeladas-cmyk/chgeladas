@@ -613,8 +613,14 @@ document.addEventListener('DOMContentLoaded', () => {
     <button class="nav-btn adm" data-tab="estoque" onclick="switchTab('estoque')">
       <i class="fas fa-boxes block text-base mb-1 mx-auto"></i>Estoque
     </button>
+    <button class="nav-btn adm" data-tab="fluxo" onclick="switchTab('fluxo')">
+      <i class="fas fa-exchange-alt text-base block mb-0.5"></i>Fluxo
+    </button>
     <button class="nav-btn adm" data-tab="financeiro" onclick="switchTab('financeiro')">
       <i class="fas fa-chart-line block text-base mb-1 mx-auto"></i>Caixa
+    </button>
+    <button class="nav-btn" data-tab="relatorio" onclick="abrirRelatorio()">
+      <i class="fas fa-chart-bar text-base block mb-0.5"></i>Relatório
     </button>
     <button class="nav-btn" data-tab="ponto" onclick="switchTab('ponto')">
       <i class="fas fa-user-clock block text-base mb-1 mx-auto"></i>Ponto
@@ -782,6 +788,59 @@ document.addEventListener('DOMContentLoaded', () => {
           <button onclick="document.getElementById('buscaEstoque').value='';renderEstoque();" class="px-3 rounded-xl bg-slate-900 text-slate-500 hover:text-white text-xs border border-white/5 transition-all flex-shrink-0"><i class="fas fa-times"></i></button>
         </div>
         <div id="gridEstoque" class="grid md:grid-cols-2 gap-4"></div>
+      </div>
+    </section>
+
+    <!-- FLUXO DE CAIXA -->
+    <section id="tab-fluxo" class="tab-pane">
+      <div class="max-w-2xl mx-auto space-y-4">
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="stat border-l-4 border-emerald-500">
+            <p class="text-[8px] font-black uppercase tracking-wider text-emerald-400 mb-1">Entradas</p>
+            <h2 id="fluxoTotalEntradas" class="text-xl font-black text-emerald-400">R$ 0,00</h2>
+            <p id="fluxoQtdEntradas" class="text-[8px] text-slate-600 font-bold mt-1">0 registos</p>
+          </div>
+          <div class="stat border-l-4 border-red-500">
+            <p class="text-[8px] font-black uppercase tracking-wider text-red-400 mb-1">Saídas</p>
+            <h2 id="fluxoTotalSaidas" class="text-xl font-black text-red-400">R$ 0,00</h2>
+            <p id="fluxoQtdSaidas" class="text-[8px] text-slate-600 font-bold mt-1">0 registos</p>
+          </div>
+          <div class="stat border-l-4 border-blue-500">
+            <p class="text-[8px] font-black uppercase tracking-wider text-blue-400 mb-1">Saldo</p>
+            <h2 id="fluxoSaldo" class="text-xl font-black text-blue-400">R$ 0,00</h2>
+            <p class="text-[8px] text-slate-600 font-bold mt-1">Entradas − Saídas</p>
+          </div>
+        </div>
+
+        <!-- Filtros + botão novo -->
+        <div class="glass rounded-[1.75rem] p-4 flex flex-wrap items-center gap-3">
+          <div class="flex gap-1 flex-wrap flex-1">
+            <button onclick="fluxoFiltro('todos')"  id="fluxoFTab-todos"  class="fluxo-tab active">Todos</button>
+            <button onclick="fluxoFiltro('entrada')" id="fluxoFTab-entrada" class="fluxo-tab">Entradas</button>
+            <button onclick="fluxoFiltro('saida')"   id="fluxoFTab-saida"   class="fluxo-tab">Saídas</button>
+            <button onclick="fluxoFiltro('hoje')"    id="fluxoFTab-hoje"    class="fluxo-tab">Hoje</button>
+          </div>
+          <button onclick="fluxoAbrirNovo()"
+            class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wide transition-all active:scale-95 flex items-center gap-2 flex-shrink-0">
+            <i class="fas fa-plus"></i> Registar
+          </button>
+        </div>
+
+        <!-- Lista de movimentações -->
+        <div class="glass rounded-[1.75rem] overflow-hidden">
+          <div class="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+            <span class="text-[9px] font-black uppercase tracking-wider text-blue-400 flex items-center gap-2">
+              <i class="fas fa-list"></i> Movimentações
+            </span>
+            <span id="fluxoTotalRegs" class="badge b-blue text-[8px]">0 reg</span>
+          </div>
+          <div id="fluxoLista" class="overflow-y-auto scroll p-4 space-y-2" style="max-height:460px">
+            <p class="text-[10px] text-slate-600 text-center py-8 font-bold">Nenhuma movimentação ainda.</p>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -2298,6 +2357,708 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 </div>
+<!-- ═══ MODAL RELATÓRIO DIÁRIO ═══ -->
+<div id="modalRelatorio" class="modal" aria-modal="true" role="dialog">
+  <div class="modal-box max-w-sm p-0 overflow-hidden">
+
+    <!-- Header -->
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <div>
+        <h3 class="text-sm font-black text-blue-400 flex items-center gap-2">
+          <i class="fas fa-chart-bar"></i> Relatório do Dia
+        </h3>
+        <p id="relDataHoje" class="text-[9px] text-slate-500 font-bold mt-0.5"></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="relEnviarWhatsApp()" class="w-8 h-8 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 flex items-center justify-center transition-all" title="Enviar pelo WhatsApp">
+          <i class="fab fa-whatsapp text-sm"></i>
+        </button>
+        <button onclick="UIService.closeModal('modalRelatorio')" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center">
+          <i class="fas fa-times text-xs"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="overflow-y-auto scroll" style="max-height:78vh">
+
+      <!-- PONTO / TURNO -->
+      <div class="px-5 pt-5 pb-3">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">⏱ Turno</p>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase tracking-wide mb-1">Entrada</p>
+            <p id="relEntrada" class="text-sm font-black text-white">--:--</p>
+          </div>
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase tracking-wide mb-1">Saída</p>
+            <p id="relSaida" class="text-sm font-black text-white">--:--</p>
+          </div>
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase tracking-wide mb-1">Duração</p>
+            <p id="relDuracao" class="text-sm font-black text-blue-400">--h--</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- CAIXA -->
+      <div class="px-5 pb-3">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">💰 Caixa</p>
+        <div class="bg-slate-900/60 border border-white/5 rounded-2xl overflow-hidden">
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Fundo inicial</span>
+            <span id="relFundo" class="text-[10px] font-black text-slate-300">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Vendas dinheiro</span>
+            <span id="relVendasDinheiro" class="text-[10px] font-black text-emerald-400">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Vendas Pix/Cartão</span>
+            <span id="relVendasDigital" class="text-[10px] font-black text-blue-400">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] font-black text-white uppercase">Total vendido</span>
+            <span id="relTotalVendido" class="text-sm font-black text-white">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 bg-emerald-500/8">
+            <span class="text-[10px] text-emerald-300 font-black uppercase">Esperado em caixa</span>
+            <span id="relEsperado" class="text-sm font-black text-emerald-300">R$ 0,00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- VENDAS -->
+      <div class="px-5 pb-3">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">🛒 Vendas</p>
+        <div class="grid grid-cols-3 gap-2 mb-2">
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase mb-1">Nº vendas</p>
+            <p id="relQtdVendas" class="text-lg font-black text-white">0</p>
+          </div>
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase mb-1">Itens</p>
+            <p id="relQtdItens" class="text-lg font-black text-white">0</p>
+          </div>
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase mb-1">Ticket</p>
+            <p id="relTicket" class="text-lg font-black text-blue-400">R$0</p>
+          </div>
+        </div>
+        <!-- Top 3 produtos -->
+        <div id="relTopProdutos" class="space-y-1.5"></div>
+      </div>
+
+      <!-- DELIVERY -->
+      <div class="px-5 pb-3">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">🛵 Delivery</p>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-slate-500 font-black uppercase mb-1">Pedidos</p>
+            <p id="relPedidos" class="text-lg font-black text-white">0</p>
+          </div>
+          <div class="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-emerald-500 font-black uppercase mb-1">Entregues</p>
+            <p id="relEntregues" class="text-lg font-black text-emerald-400">0</p>
+          </div>
+          <div class="bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-amber-500 font-black uppercase mb-1">Pendentes</p>
+            <p id="relPendentes" class="text-lg font-black text-amber-400">0</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- STOCK (só ADM) -->
+      <div id="relSecStock" class="px-5 pb-3 hidden">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">📦 Stock</p>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+          <div class="bg-red-500/8 border border-red-500/20 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-red-400 font-black uppercase mb-1">Esgotados</p>
+            <p id="relEsgotados" class="text-lg font-black text-red-400">0</p>
+          </div>
+          <div class="bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 text-center">
+            <p class="text-[8px] text-amber-400 font-black uppercase mb-1">Stock baixo</p>
+            <p id="relStockBaixo" class="text-lg font-black text-amber-400">0</p>
+          </div>
+        </div>
+        <div id="relAlertasStock" class="space-y-1"></div>
+      </div>
+
+      <!-- LUCRO / INVESTIMENTO (só ADM) -->
+      <div id="relSecLucro" class="px-5 pb-5 hidden">
+        <p class="text-[8px] text-slate-500 uppercase font-black tracking-widest mb-3">📈 Resultado</p>
+        <div class="bg-slate-900/60 border border-white/5 rounded-2xl overflow-hidden">
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Lucro bruto hoje</span>
+            <span id="relLucro" class="text-[10px] font-black text-emerald-400">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Margem</span>
+            <span id="relMargem" class="text-[10px] font-black text-blue-400">0%</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Total investido</span>
+            <span id="relInvestimento" class="text-[10px] font-black text-slate-300">R$ 0,00</span>
+          </div>
+          <div class="flex justify-between items-center px-4 py-2.5 border-b border-white/5">
+            <span class="text-[10px] text-slate-400 font-bold">Retorno acumulado</span>
+            <span id="relRetornoAcum" class="text-[10px] font-black text-violet-400">R$ 0,00</span>
+          </div>
+          <div id="relMetaBox" class="flex justify-between items-center px-4 py-3 bg-violet-500/8">
+            <span class="text-[10px] text-violet-300 font-black uppercase">ROI total</span>
+            <span id="relRoi" class="text-sm font-black text-violet-300">0%</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="p-4 border-t border-white/5">
+      <button onclick="relEnviarWhatsApp()"
+        class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2">
+        <i class="fab fa-whatsapp"></i> Enviar relatório ao ADM
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const fc = Utils.formatCurrency;
+  const todayISO = () => Utils.todayISO ? Utils.todayISO() : new Date().toISOString().slice(0,10);
+  const todayDisp = () => Utils.today ? Utils.today() : new Date().toLocaleDateString('pt-BR');
+
+  /* ── Abre e popula o relatório ────────────────────────── */
+  window.abrirRelatorio = function () {
+    _popular();
+    UIService.openModal('modalRelatorio');
+  };
+
+  function _popular() {
+    const isoHoje  = todayISO();
+    const dispHoje = todayDisp();
+    const isAdm    = AuthService.isAdmin();
+
+    // Data header
+    _set('relDataHoje', new Date().toLocaleDateString('pt-BR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'}));
+
+    // ── Ponto ─────────────────────────────────────────────
+    const pontos = (Store.Selectors.getPonto() || []).filter(p => {
+      const d = p.dataCurta || p.data || '';
+      return d === isoHoje || d === dispHoje || d.startsWith(dispHoje);
+    });
+    const entrada = pontos.find(p => p.tipo === 'ENTRADA');
+    const saida   = pontos.find(p => p.tipo === 'SAIDA');
+    _set('relEntrada', entrada?.hora || entrada?.time || '--:--');
+    _set('relSaida',   saida?.hora   || saida?.time   || '--:--');
+
+    if (entrada && saida) {
+      const [eh, em] = (entrada.hora || '00:00').split(':').map(Number);
+      const [sh, sm] = (saida.hora   || '00:00').split(':').map(Number);
+      const dur = (sh * 60 + sm) - (eh * 60 + em);
+      if (dur > 0) _set('relDuracao', Math.floor(dur/60) + 'h' + String(dur%60).padStart(2,'0'));
+      else _set('relDuracao', '--h--');
+    } else {
+      _set('relDuracao', '--h--');
+    }
+
+    // ── Caixa ─────────────────────────────────────────────
+    const caixas = Store.Selectors.getCaixa() || [];
+    const abertura = caixas.find(c => {
+      const d = c.dataCurta || c.data || '';
+      return (d === isoHoje || d === dispHoje || d.startsWith(dispHoje)) && c.tipo === 'ABERTURA';
+    });
+    const fundo = abertura?.valorInicial ?? abertura?.saldo ?? abertura?.fundo ?? 0;
+    _set('relFundo', fc(fundo));
+
+    // ── Vendas ────────────────────────────────────────────
+    const vendas = (Store.Selectors.getVendas() || []).filter(v => {
+      const d = v.dataCurta || '';
+      return d === isoHoje || d === dispHoje || (v.data || '').startsWith(dispHoje);
+    });
+
+    let totalDinheiro = 0, totalDigital = 0, totalLucro = 0, totalItens = 0;
+    const contaProd = {};
+
+    vendas.forEach(v => {
+      const t = v.total || 0;
+      const pgto = (v.formaPgto || '').toLowerCase();
+      if (pgto.includes('dinheiro')) totalDinheiro += t;
+      else totalDigital += t;
+      totalLucro += v.lucro || 0;
+      (v.itens || []).forEach(it => {
+        totalItens += it.qtd || 1;
+        const key = it.nome || it.prodNome || it.id || 'Produto';
+        contaProd[key] = (contaProd[key] || 0) + (it.qtd || 1);
+      });
+    });
+
+    const totalVendido = totalDinheiro + totalDigital;
+    const esperado     = fundo + totalDinheiro;
+    const ticket       = vendas.length > 0 ? totalVendido / vendas.length : 0;
+
+    _set('relVendasDinheiro', fc(totalDinheiro));
+    _set('relVendasDigital',  fc(totalDigital));
+    _set('relTotalVendido',   fc(totalVendido));
+    _set('relEsperado',       fc(esperado));
+    _set('relQtdVendas',      vendas.length);
+    _set('relQtdItens',       totalItens);
+    _set('relTicket',         'R$' + Math.round(ticket));
+
+    // Top 3 produtos
+    const top3 = Object.entries(contaProd).sort((a,b) => b[1]-a[1]).slice(0,3);
+    const topEl = document.getElementById('relTopProdutos');
+    if (topEl) {
+      if (top3.length === 0) {
+        topEl.innerHTML = '<p class="text-[9px] text-slate-600 text-center py-2 font-bold">Sem vendas hoje</p>';
+      } else {
+        topEl.innerHTML = top3.map(([nome, qty], i) => {
+          const icons = ['🥇','🥈','🥉'];
+          return `<div class="flex items-center justify-between bg-slate-900/60 border border-white/5 rounded-xl px-3 py-2">
+            <span class="text-[10px] font-black text-slate-300">${icons[i]} ${nome}</span>
+            <span class="text-[10px] font-black text-blue-400">${qty} un</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // ── Delivery ──────────────────────────────────────────
+    const pedidos = (Store.Selectors.getPedidos() || []).filter(p => {
+      const d = p.dataCurta || p.data || '';
+      return d === isoHoje || d === dispHoje || d.startsWith(dispHoje);
+    });
+    _set('relPedidos',   pedidos.length);
+    _set('relEntregues', pedidos.filter(p => p.status === 'ENTREGUE').length);
+    _set('relPendentes', pedidos.filter(p => p.status === 'PENDENTE' || p.status === 'EM_ROTA').length);
+
+    // ── Secções ADM ───────────────────────────────────────
+    document.getElementById('relSecStock')?.classList.toggle('hidden', !isAdm);
+    document.getElementById('relSecLucro')?.classList.toggle('hidden', !isAdm);
+
+    // Botão: colob vê "Enviar ao ADM", ADM vê "Partilhar"
+    const btnEl = document.querySelector('#modalRelatorio .fab\\:whatsapp')?.closest('button');
+    const footEl = document.querySelector('#modalRelatorio footer button, #modalRelatorio .p-4 button');
+    if (footEl) footEl.textContent = isAdm ? '📤 Partilhar relatório' : '📲 Enviar ao ADM';
+
+    if (isAdm) {
+      // Stock
+      const estoque = Store.Selectors.getEstoque() || [];
+      const esgotados = estoque.filter(p => (p.qtdUn || 0) <= 0);
+      const baixos    = Store.Selectors.getLowStockItems?.() || [];
+      _set('relEsgotados',  esgotados.length);
+      _set('relStockBaixo', baixos.length);
+
+      const alertsEl = document.getElementById('relAlertasStock');
+      if (alertsEl) {
+        const criticos = [...esgotados, ...baixos.filter(p => !esgotados.find(e => e.id === p.id))].slice(0,5);
+        alertsEl.innerHTML = criticos.map(p => {
+          const cor = (p.qtdUn || 0) <= 0 ? 'red' : 'amber';
+          return `<div class="flex justify-between items-center bg-${cor}-500/8 border border-${cor}-500/20 rounded-xl px-3 py-2">
+            <span class="text-[10px] font-black text-${cor}-300">${p.nome || p.name}</span>
+            <span class="text-[10px] font-black text-${cor}-400">${p.qtdUn || 0} un</span>
+          </div>`;
+        }).join('');
+      }
+
+      // Lucro / investimento
+      const investimento   = Store.Selectors.getInvestimento() || 0;
+      const lucroAcumulado = (Store.Selectors.getVendas() || []).reduce((s, v) => s + (v.lucro || 0), 0);
+      const margem = totalVendido > 0 ? (totalLucro / totalVendido * 100).toFixed(1) : 0;
+      const roi    = investimento > 0 ? ((lucroAcumulado / investimento) * 100).toFixed(1) : 0;
+
+      _set('relLucro',       fc(totalLucro));
+      _set('relMargem',      margem + '%');
+      _set('relInvestimento', fc(investimento));
+      _set('relRetornoAcum', fc(lucroAcumulado));
+      _set('relRoi',         roi + '%');
+    }
+  }
+
+  /* ── Enviar via WhatsApp ─────────────────────────────── */
+  window.relEnviarWhatsApp = function () {
+    const config  = Store.Selectors.getConfig() || {};
+    const isAdm   = AuthService.isAdmin();
+    const zapNum  = isAdm
+      ? (config.whatsappColaborador || config.whatsapp || '').replace(/\D/g,'')
+      : (config.whatsapp || '').replace(/\D/g,'');
+
+    const nome    = config.nome || 'CH Geladas PDV';
+    const hoje    = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric'});
+    const hora    = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+
+    // Coleta dados já calculados dos elementos
+    const g = id => document.getElementById(id)?.textContent?.trim() || '-';
+
+    let msg = '📊 *' + nome + ' — Relatório Diário*\n';
+    msg += '📅 ' + hoje + ' · ' + hora + '\n\n';
+
+    msg += '⏱ *Turno*\n';
+    msg += 'Entrada: ' + g('relEntrada') + '  |  Saída: ' + g('relSaida') + '  |  Duração: ' + g('relDuracao') + '\n\n';
+
+    msg += '💰 *Caixa*\n';
+    msg += 'Fundo inicial: ' + g('relFundo') + '\n';
+    msg += 'Vendas dinheiro: ' + g('relVendasDinheiro') + '\n';
+    msg += 'Pix/Cartão: ' + g('relVendasDigital') + '\n';
+    msg += '▶ Total vendido: *' + g('relTotalVendido') + '*\n';
+    msg += '▶ Esperado em caixa: *' + g('relEsperado') + '*\n\n';
+
+    msg += '🛒 *Vendas*\n';
+    msg += g('relQtdVendas') + ' vendas · ' + g('relQtdItens') + ' itens · Ticket médio: ' + g('relTicket') + '\n\n';
+
+    msg += '🛵 *Delivery*\n';
+    msg += 'Pedidos: ' + g('relPedidos') + '  |  Entregues: ' + g('relEntregues') + '  |  Pendentes: ' + g('relPendentes') + '\n\n';
+
+    if (isAdm) {
+      msg += '📈 *Resultado*\n';
+      msg += 'Lucro hoje: ' + g('relLucro') + '  |  Margem: ' + g('relMargem') + '\n';
+      msg += 'Investimento: ' + g('relInvestimento') + '  |  ROI: ' + g('relRoi') + '\n\n';
+
+      const esg = g('relEsgotados'), baixo = g('relStockBaixo');
+      if (esg !== '0' || baixo !== '0') {
+        msg += '⚠️ *Stock*\n';
+        msg += 'Esgotados: ' + esg + '  |  Stock baixo: ' + baixo + '\n\n';
+      }
+    }
+
+    msg += '_Enviado pelo CH Geladas PDV_';
+
+    if (zapNum) Utils.openWhatsApp(zapNum, msg);
+    else UIService.showToast('Sem número configurado', 'Configure o WhatsApp em ⚙️ Configurações', 'warning');
+  };
+
+  function _set(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+})();
+</script>
+
+<!-- ═══ MODAL NOVA MOVIMENTAÇÃO ═══ -->
+<div id="modalFluxo" class="modal" aria-modal="true" role="dialog">
+  <div class="modal-box max-w-sm p-0 overflow-hidden">
+    <div class="p-5 border-b border-white/5 flex items-center justify-between">
+      <h3 id="modalFluxoTitulo" class="text-sm font-black text-blue-400 flex items-center gap-2">
+        <i class="fas fa-plus-circle"></i> Nova Movimentação
+      </h3>
+      <button onclick="UIService.closeModal('modalFluxo')" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center">
+        <i class="fas fa-times text-xs"></i>
+      </button>
+    </div>
+    <div class="p-6 space-y-4">
+
+      <!-- Tipo -->
+      <div>
+        <p class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2">Tipo</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="fluxoSetTipo('entrada', this)"
+            class="fluxo-tipo-btn py-3 rounded-xl border font-black text-xs uppercase tracking-wide transition-all
+                   bg-emerald-600/20 border-emerald-500/40 text-emerald-300 fluxo-tipo-sel"
+            data-tipo="entrada">
+            <i class="fas fa-arrow-down mr-1"></i> Entrada
+          </button>
+          <button onclick="fluxoSetTipo('saida', this)"
+            class="fluxo-tipo-btn py-3 rounded-xl border font-black text-xs uppercase tracking-wide transition-all
+                   bg-slate-800 border-white/10 text-slate-400"
+            data-tipo="saida">
+            <i class="fas fa-arrow-up mr-1"></i> Saída
+          </button>
+        </div>
+      </div>
+
+      <!-- Valor -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Valor (R$)</label>
+        <input type="number" id="fluxoValor" class="inp w-full text-2xl font-black text-center"
+          placeholder="0,00" step="0.01" min="0" inputmode="decimal">
+      </div>
+
+      <!-- Categoria -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Categoria</label>
+        <select id="fluxoCategoria" class="inp w-full"></select>
+      </div>
+
+      <!-- Descrição -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Descrição</label>
+        <input type="text" id="fluxoDescricao" class="inp w-full" placeholder="Ex: Compra de gelo, Pagamento fornecedor...">
+      </div>
+
+      <!-- Data -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Data</label>
+        <input type="date" id="fluxoData" class="inp w-full">
+      </div>
+
+      <!-- Forma de pagamento -->
+      <div>
+        <label class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2 block">Forma de pagamento</label>
+        <div class="grid grid-cols-3 gap-1.5">
+          <button onclick="fluxoSetPgto('dinheiro', this)" class="fluxo-pgto-btn py-2 rounded-xl bg-slate-800 border border-white/5 text-[10px] font-black text-slate-300 hover:border-blue-500/30 transition-all fluxo-pgto-sel">💵 Dinheiro</button>
+          <button onclick="fluxoSetPgto('pix', this)"      class="fluxo-pgto-btn py-2 rounded-xl bg-slate-800 border border-white/5 text-[10px] font-black text-slate-300 hover:border-blue-500/30 transition-all">📱 Pix</button>
+          <button onclick="fluxoSetPgto('cartao', this)"   class="fluxo-pgto-btn py-2 rounded-xl bg-slate-800 border border-white/5 text-[10px] font-black text-slate-300 hover:border-blue-500/30 transition-all">💳 Cartão</button>
+        </div>
+      </div>
+
+    </div>
+    <div class="p-5 border-t border-white/5 flex gap-3">
+      <button onclick="UIService.closeModal('modalFluxo')" class="px-5 py-3 rounded-xl bg-slate-800 text-slate-400 font-black uppercase text-xs">Cancelar</button>
+      <button onclick="fluxoSalvar()" class="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black uppercase text-xs tracking-wide transition-all">
+        <i class="fas fa-save mr-1"></i> Guardar
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── Categorias por tipo ──────────────────────────────── */
+  const CATS = {
+    entrada: ['Aporte','Reembolso','Venda Extra','Patrocínio','Outro'],
+    saida:   ['Compra Stock','Fornecedor','Aluguel','Salário','Transporte',
+              'Embalagem','Energia/Água','Marketing','Manutenção','Outro'],
+  };
+
+  /* ── Estado local ─────────────────────────────────────── */
+  let _tipo  = 'entrada';
+  let _pgto  = 'dinheiro';
+  let _filtro = 'todos';
+  let _editId = null;
+
+  /* ── CSS injetado ─────────────────────────────────────── */
+  const style = document.createElement('style');
+  style.textContent = `
+    .fluxo-tab{padding:.35rem .75rem;border-radius:.75rem;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;background:transparent;color:#64748b;transition:all .15s;border:1px solid transparent;}
+    .fluxo-tab.active{background:rgba(59,130,246,.15);color:#60a5fa;border-color:rgba(59,130,246,.3);}
+    .fluxo-tipo-sel{opacity:1!important}
+    .fluxo-pgto-sel{background:rgba(59,130,246,.15)!important;border-color:rgba(59,130,246,.35)!important;color:#93c5fd!important;}
+  `;
+  document.head.appendChild(style);
+
+  /* ── Abre modal ───────────────────────────────────────── */
+  window.fluxoAbrirNovo = function (id) {
+    _editId = id || null;
+    let mov = null;
+    if (_editId) {
+      mov = (Store.Selectors.getMovimentacoes() || []).find(m => m.id === _editId);
+    }
+
+    // Tipo
+    _tipo = mov?.tipo || 'entrada';
+    document.querySelectorAll('.fluxo-tipo-btn').forEach(b => {
+      const sel = b.dataset.tipo === _tipo;
+      b.className = b.className.replace(/bg-\w+-\d+\/\d+|border-\w+-\d+\/\d+|text-\w+-\d+|bg-slate-800|border-white\/10|text-slate-400/g, '').trim();
+      if (sel && _tipo === 'entrada') b.className += ' bg-emerald-600/20 border-emerald-500/40 text-emerald-300 fluxo-tipo-sel';
+      else if (sel) b.className += ' bg-red-600/20 border-red-500/40 text-red-300 fluxo-tipo-sel';
+      else b.className += ' bg-slate-800 border-white/10 text-slate-400';
+    });
+
+    _popularCategorias(_tipo, mov?.categoria);
+
+    // Campos
+    const v = document.getElementById('fluxoValor');
+    if (v) v.value = mov?.valor || '';
+    const d = document.getElementById('fluxoDescricao');
+    if (d) d.value = mov?.descricao || '';
+    const dt = document.getElementById('fluxoData');
+    if (dt) dt.value = mov?.data || Utils.todayISO();
+
+    // Pgto
+    _pgto = mov?.pgto || 'dinheiro';
+    document.querySelectorAll('.fluxo-pgto-btn').forEach(b => b.classList.remove('fluxo-pgto-sel'));
+    document.querySelectorAll('.fluxo-pgto-btn').forEach(b => {
+      if (b.textContent.toLowerCase().includes(_pgto)) b.classList.add('fluxo-pgto-sel');
+    });
+
+    const titulo = document.getElementById('modalFluxoTitulo');
+    if (titulo) titulo.innerHTML = _editId
+      ? '<i class="fas fa-edit"></i> Editar Movimentação'
+      : '<i class="fas fa-plus-circle"></i> Nova Movimentação';
+
+    UIService.openModal('modalFluxo');
+    setTimeout(() => document.getElementById('fluxoValor')?.focus(), 200);
+  };
+
+  function _popularCategorias(tipo, selecao) {
+    const sel = document.getElementById('fluxoCategoria');
+    if (!sel) return;
+    sel.innerHTML = CATS[tipo].map(c =>
+      `<option value="${c}" ${c === selecao ? 'selected' : ''}>${c}</option>`
+    ).join('');
+  }
+
+  window.fluxoSetTipo = function (tipo, btn) {
+    _tipo = tipo;
+    document.querySelectorAll('.fluxo-tipo-btn').forEach(b => {
+      b.classList.remove('fluxo-tipo-sel','bg-emerald-600/20','border-emerald-500/40','text-emerald-300',
+                          'bg-red-600/20','border-red-500/40','text-red-300');
+      b.classList.add('bg-slate-800','border-white/10','text-slate-400');
+    });
+    btn.classList.remove('bg-slate-800','border-white/10','text-slate-400');
+    if (tipo === 'entrada') btn.classList.add('bg-emerald-600/20','border-emerald-500/40','text-emerald-300','fluxo-tipo-sel');
+    else                    btn.classList.add('bg-red-600/20','border-red-500/40','text-red-300','fluxo-tipo-sel');
+    _popularCategorias(tipo);
+  };
+
+  window.fluxoSetPgto = function (pgto, btn) {
+    _pgto = pgto;
+    document.querySelectorAll('.fluxo-pgto-btn').forEach(b => b.classList.remove('fluxo-pgto-sel'));
+    btn.classList.add('fluxo-pgto-sel');
+  };
+
+  /* ── Guardar ──────────────────────────────────────────── */
+  window.fluxoSalvar = function () {
+    const valor = parseFloat(document.getElementById('fluxoValor')?.value);
+    if (!valor || valor <= 0) { UIService.showToast('Valor inválido', 'Insira um valor maior que zero', 'error'); return; }
+
+    const mov = {
+      id:         _editId || 'mv_' + Date.now(),
+      tipo:       _tipo,
+      valor:      valor,
+      categoria:  document.getElementById('fluxoCategoria')?.value || 'Outro',
+      descricao:  (document.getElementById('fluxoDescricao')?.value || '').trim(),
+      data:       document.getElementById('fluxoData')?.value || Utils.todayISO(),
+      pgto:       _pgto,
+      criadoEm:   _editId ? undefined : new Date().toISOString(),
+    };
+    if (_editId) delete mov.criadoEm;
+
+    Store.mutate(state => {
+      if (!Array.isArray(state.movimentacoes)) state.movimentacoes = [];
+      if (_editId) {
+        const idx = state.movimentacoes.findIndex(m => m.id === _editId);
+        if (idx !== -1) state.movimentacoes[idx] = { ...state.movimentacoes[idx], ...mov };
+      } else {
+        state.movimentacoes.unshift(mov);
+      }
+    });
+    SyncService.persistNow();
+    UIService.closeModal('modalFluxo');
+    UIService.showToast(_editId ? 'Atualizado ✓' : 'Registado ✓', Utils.formatCurrency(valor), _tipo === 'entrada' ? 'success' : 'warning');
+    renderFluxo();
+  };
+
+  /* ── Excluir ──────────────────────────────────────────── */
+  window.fluxoExcluir = function (id) {
+    if (!confirm('Excluir esta movimentação?')) return;
+    Store.mutate(state => {
+      if (!Array.isArray(state.movimentacoes)) return;
+      const idx = state.movimentacoes.findIndex(m => m.id === id);
+      if (idx !== -1) state.movimentacoes.splice(idx, 1);
+    });
+    SyncService.persistNow();
+    UIService.showToast('Excluído', '', 'warning');
+    renderFluxo();
+  };
+
+  /* ── Filtro ───────────────────────────────────────────── */
+  window.fluxoFiltro = function (f) {
+    _filtro = f;
+    document.querySelectorAll('[id^="fluxoFTab-"]').forEach(b => b.classList.remove('active'));
+    document.getElementById('fluxoFTab-' + f)?.classList.add('active');
+    renderFluxo();
+  };
+
+  /* ── Render ───────────────────────────────────────────── */
+  window.renderFluxo = function () {
+    const isoHoje = Utils.todayISO ? Utils.todayISO() : new Date().toISOString().slice(0,10);
+    let movs = Store.Selectors.getMovimentacoes() || [];
+
+    // Filtrar
+    if (_filtro === 'entrada') movs = movs.filter(m => m.tipo === 'entrada');
+    else if (_filtro === 'saida')   movs = movs.filter(m => m.tipo === 'saida');
+    else if (_filtro === 'hoje')    movs = movs.filter(m => m.data === isoHoje);
+
+    // KPIs — sempre sobre TODOS
+    const todos = Store.Selectors.getMovimentacoes() || [];
+    const totalE = todos.filter(m => m.tipo === 'entrada').reduce((s,m) => s + m.valor, 0);
+    const totalS = todos.filter(m => m.tipo === 'saida').reduce((s,m) => s + m.valor, 0);
+    const saldo  = totalE - totalS;
+
+    _setText('fluxoTotalEntradas', Utils.formatCurrency(totalE));
+    _setText('fluxoQtdEntradas',   todos.filter(m=>m.tipo==='entrada').length + ' registos');
+    _setText('fluxoTotalSaidas',   Utils.formatCurrency(totalS));
+    _setText('fluxoQtdSaidas',     todos.filter(m=>m.tipo==='saida').length + ' registos');
+    _setText('fluxoSaldo',         Utils.formatCurrency(saldo));
+    _setText('fluxoTotalRegs',     movs.length + ' reg');
+
+    const cor = saldo >= 0 ? 'text-blue-400' : 'text-red-400';
+    const saldoEl = document.getElementById('fluxoSaldo');
+    if (saldoEl) { saldoEl.className = 'text-xl font-black ' + cor; }
+
+    // Lista
+    const lista = document.getElementById('fluxoLista');
+    if (!lista) return;
+    if (movs.length === 0) {
+      lista.innerHTML = '<p class="text-[10px] text-slate-600 text-center py-8 font-bold">Nenhuma movimentação encontrada.</p>';
+      return;
+    }
+
+    // Agrupa por data
+    const porData = {};
+    movs.forEach(m => {
+      const k = m.data || isoHoje;
+      if (!porData[k]) porData[k] = [];
+      porData[k].push(m);
+    });
+
+    lista.innerHTML = Object.entries(porData)
+      .sort((a,b) => b[0].localeCompare(a[0]))
+      .map(([data, items]) => {
+        const dataFmt = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {weekday:'short', day:'2-digit', month:'short'});
+        const linhas  = items.map(m => {
+          const isE  = m.tipo === 'entrada';
+          const cor  = isE ? 'emerald' : 'red';
+          const icon = isE ? 'fa-arrow-down' : 'fa-arrow-up';
+          const pgtoIcon = m.pgto === 'pix' ? '📱' : m.pgto === 'cartao' ? '💳' : '💵';
+          return `
+            <div class="flex items-center gap-3 bg-slate-900/50 border border-white/5 rounded-xl px-3 py-2.5">
+              <div class="w-8 h-8 rounded-xl bg-${cor}-500/15 border border-${cor}-500/25 flex items-center justify-center flex-shrink-0">
+                <i class="fas ${icon} text-${cor}-400 text-xs"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] font-black text-white truncate">${m.descricao || m.categoria}</p>
+                <p class="text-[9px] text-slate-500 font-bold">${m.categoria} · ${pgtoIcon}</p>
+              </div>
+              <div class="text-right flex-shrink-0">
+                <p class="text-sm font-black text-${cor}-400">${isE ? '+' : '-'}${Utils.formatCurrency(m.valor)}</p>
+                <div class="flex gap-1 justify-end mt-1">
+                  <button onclick="fluxoAbrirNovo('${m.id}')" class="text-[8px] text-slate-600 hover:text-blue-400 transition-colors font-black uppercase">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button onclick="fluxoExcluir('${m.id}')" class="text-[8px] text-slate-600 hover:text-red-400 transition-colors font-black uppercase">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>`;
+        }).join('');
+        return `
+          <div>
+            <p class="text-[8px] text-slate-600 font-black uppercase tracking-widest mb-2 px-1 capitalize">${dataFmt}</p>
+            <div class="space-y-1.5">${linhas}</div>
+          </div>`;
+      }).join('');
+  };
+
+  function _setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  // Render ao mudar de tab
+  EventBus.on('tab:fluxo', renderFluxo);
+  // Render inicial se tab já estiver ativo
+  window.addEventListener('load', () => setTimeout(renderFluxo, 600));
+
+})();
+</script>
+
 <!-- ═══ CALCULADORA DE TROCO ═══ -->
 <script>
 (function() {
