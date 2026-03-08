@@ -1425,8 +1425,10 @@ const VendaService = (() => {
     if (resumoEl)   resumoEl.textContent   = `Total: ${Utils.formatCurrency(CartService.getTotal())}`;
 
     // Injeta painel de desconto se ainda não existe no modal
-    const modal = Utils.el('modalPagamento');
-    if (modal && !Utils.el('_pdvDescontoInput')) {
+    const modal    = Utils.el('modalPagamento');
+    // Operar dentro do .modal-box — os botões são filhos diretos dele, não do .modal
+    const modalBox = modal?.querySelector('.modal-box') ?? modal;
+    if (modalBox && !Utils.el('_pdvDescontoInput')) {
       const wrap = document.createElement('div');
       wrap.id        = '_pdvDescontoWrap';
       wrap.className = 'mt-3 mb-1';
@@ -1442,15 +1444,13 @@ const VendaService = (() => {
           </button>
         </div>
         <p id="_pdvDescontoInfo" class="text-[8px] text-amber-400 font-bold mt-1 hidden"></p>`;
-      // Insere antes dos botões de pagamento
-      const firstBtn = modal.querySelector('button[onclick*="confirmarPagamento"]') ||
-                       modal.querySelector('[class*="grid"]') ||
-                       modal.lastElementChild;
-      modal.insertBefore(wrap, firstBtn?.parentElement ?? firstBtn ?? null);
+      // Insere antes do grid de botões — filho direto do modal-box
+      const grid = modalBox.querySelector('[class*="grid"]');
+      modalBox.insertBefore(wrap, grid ?? null);
     }
 
     // Injeta seção de pagamento múltiplo
-    if (modal && !Utils.el('_pdvMultiPgtoWrap')) {
+    if (modalBox && !Utils.el('_pdvMultiPgtoWrap')) {
       const mp = document.createElement('div');
       mp.id        = '_pdvMultiPgtoWrap';
       mp.className = 'mt-2 mb-2 hidden';
@@ -1460,7 +1460,7 @@ const VendaService = (() => {
           <div id="_pdvPgtosLista" class="space-y-1 mb-2"></div>
           <p id="_pdvPgtoRestante" class="text-[9px] text-blue-300 font-bold mb-2">Restante: —</p>
         </div>`;
-      modal.appendChild(mp);
+      modalBox.appendChild(mp);
     }
 
     UIService.openModal('modalPagamento');

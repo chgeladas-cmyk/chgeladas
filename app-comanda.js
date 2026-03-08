@@ -534,8 +534,10 @@ const ComandaFechamento = (() => {
     }
 
     // Painel de desconto injetado dinamicamente
-    const modalEl = Utils.el('modalCmdFechar');
-    if (modalEl && !Utils.el('_cmdDescontoWrap')) {
+    const modalEl  = Utils.el('modalCmdFechar');
+    // Operar dentro do .modal-box — filhos diretos estão lá, não no .modal
+    const modalBox = modalEl?.querySelector('.modal-box') ?? modalEl;
+    if (modalBox && !Utils.el('_cmdDescontoWrap')) {
       const dw = document.createElement('div');
       dw.id        = '_cmdDescontoWrap';
       dw.className = 'mt-3 mb-2';
@@ -552,12 +554,16 @@ const ComandaFechamento = (() => {
         </div>
         <p id="_cmdDescontoInfo" class="text-[8px] text-amber-400 font-bold mt-1 hidden"></p>`;
       const totalWrap = Utils.el('cmdFechTotal')?.parentElement;
-      if (totalWrap) totalWrap.parentElement?.insertBefore(dw, totalWrap.nextSibling);
-      else modalEl.insertBefore(dw, modalEl.querySelector('button'));
+      if (totalWrap && totalWrap.parentElement) {
+        totalWrap.parentElement.insertBefore(dw, totalWrap.nextSibling);
+      } else {
+        const firstBtn = modalBox.querySelector('button');
+        modalBox.insertBefore(dw, firstBtn ?? null);
+      }
     }
 
     // Painel de pagamentos múltiplos injetado dinamicamente
-    if (modalEl && !Utils.el('_cmdMultiPgtoWrap')) {
+    if (modalBox && !Utils.el('_cmdMultiPgtoWrap')) {
       const mp = document.createElement('div');
       mp.id        = '_cmdMultiPgtoWrap';
       mp.className = 'mt-2 mb-2 hidden';
@@ -567,7 +573,7 @@ const ComandaFechamento = (() => {
           <div id="_cmdPgtosLista" class="space-y-1 mb-2"></div>
           <p id="_cmdPgtoRestante" class="text-[9px] text-amber-300 font-bold"></p>
         </div>`;
-      modalEl.appendChild(mp);
+      modalBox.appendChild(mp);
     }
 
     _atualizarTotalFechamento(c.total);
