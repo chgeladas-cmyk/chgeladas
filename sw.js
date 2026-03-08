@@ -40,7 +40,6 @@ const APP_SHELL = [
   '/app-delivery.js',
   '/app-ponto.js',
   '/app-comanda.js',
-  '/app-ia.js',
   '/firebase.js',
   '/sync.js',
   '/manifest.json',
