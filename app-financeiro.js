@@ -154,8 +154,13 @@ const FinanceCalc = (() => {
   function calcularKPIsGlobais() {
     const todas = Store.Selectors.getVendas();
     const inv   = Store.Selectors.getInvestimento();
+    // FIX: usar v.total (já com desconto aplicado) e v.lucro (já com desconto) — ambos gravados corretamente no checkout
     const bruto = todas.reduce((a, v) => a + (v.total || 0), 0);
-    const lucro = todas.reduce((a, v) => a + (v.lucro || 0), 0);
+    const lucro = todas.reduce((a, v) => {
+      const l = v.lucro || 0;
+      // Sanidade: lucro não pode exceder receita da venda
+      return a + Math.min(l, v.total || 0);
+    }, 0);
     return {
       bruto, lucro, inv,
       roi:               inv > 0 ? (lucro / inv) * 100 : null,
@@ -166,14 +171,15 @@ const FinanceCalc = (() => {
 
   function calcularKPIsPeriodo(vendas) {
     const bruto    = vendas.reduce((a, v) => a + (v.total || 0), 0);
-    const lucro    = vendas.reduce((a, v) => a + (v.lucro || 0), 0);
+    // FIX: lucro limitado ao total da venda (sanidade)
+    const lucro    = vendas.reduce((a, v) => a + Math.min(v.lucro || 0, v.total || 0), 0);
     const qtd      = vendas.length;
     const delivery = vendas.filter(v => v.origem === 'DELIVERY').reduce((a, v) => a + (v.total || 0), 0);
     const comanda  = vendas.filter(v => v.origem === 'COMANDA').reduce((a, v)  => a + (v.total || 0), 0);
     return {
       bruto, lucro, qtd,
       ticket:       qtd > 0 ? bruto / qtd : 0,
-      margem:       bruto > 0 ? (lucro / bruto) * 100 : 0,
+      margem:       bruto > 0 ? Math.min(100, (lucro / bruto) * 100) : 0,
       delivery,     deliveryPerc: bruto > 0 ? (delivery / bruto) * 100 : 0,
       comanda,      comandaPerc:  bruto > 0 ? (comanda  / bruto) * 100 : 0,
     };
@@ -756,6 +762,16 @@ const FinanceRenderer = (() => {
       `<span class="text-[8px] text-slate-600 font-bold">${_esc(i.nome || '')}</span>`
     ).join('<span class="text-slate-800 mx-0.5">·</span>');
 
+    // Desconto badge
+    const descBadge = (v.desconto || 0) > 0
+      ? `<span class="text-[7px] font-bold text-amber-400">-${Utils.formatCurrency(v.desconto)}</span>`
+      : '';
+
+    // Pagamentos múltiplos
+    const pgtoStr = (v.pagamentos && v.pagamentos.length > 1)
+      ? v.pagamentos.map(p => `${p.forma}: ${Utils.formatCurrency(p.valor)}`).join(' + ')
+      : (v.formaPgto || '');
+
     return `
       <article class="p-3 rounded-xl border border-white/5 hover:bg-slate-900/60 transition-all ${bdr}">
         <div class="flex justify-between items-start gap-2">
@@ -763,10 +779,11 @@ const FinanceRenderer = (() => {
             <div class="flex items-center gap-1.5 flex-wrap mb-1">
               <span class="text-sm font-black text-white">${Utils.formatCurrency(v.total)}</span>
               ${(v.lucro || 0) > 0 ? `<span class="text-[8px] text-emerald-400 font-bold">+${Utils.formatCurrency(v.lucro)}</span>` : ''}
+              ${descBadge}
               <span class="badge b-blue text-[7px]">${(v.itens || []).length} it.</span>
               ${isDlv ? `<span class="badge b-purple text-[7px]">🏍️ Delivery</span>` : ''}
-              ${isCmd ? `<span class="badge b-amber  text-[7px]">📋 Comanda</span>` : ''}
-              ${v.formaPgto ? `<span class="text-[7px] font-bold text-slate-500">${_esc(v.formaPgto)}</span>` : ''}
+              ${isCmd ? `<span class="badge b-amber  text-[7px]">📋 Comanda${v.nomeComanda ? ': ' + _esc(v.nomeComanda) : ''}</span>` : ''}
+              ${pgtoStr ? `<span class="text-[7px] font-bold text-slate-500">${_esc(pgtoStr)}</span>` : ''}
             </div>
             <div class="flex gap-1 flex-wrap">${itens}</div>
             <p class="text-[8px] text-slate-600 font-bold mt-1">${_esc(v.data || '')}${v.hora ? ' · ' + _esc(v.hora) : ''}</p>

@@ -28,7 +28,7 @@
 ═══════════════════════════════════════════════════════════════════ */
 
 /** Incrementar a cada deploy para invalidar cache antigo */
-const CACHE_VERSION = 'ch-geladas-v6.0.0';
+const CACHE_VERSION = 'ch-geladas-v6.1.0';
 
 /** App Shell: arquivos locais que sempre devem estar no cache */
 const APP_SHELL = [
@@ -40,6 +40,7 @@ const APP_SHELL = [
   '/app-delivery.js',
   '/app-ponto.js',
   '/app-comanda.js',
+  '/app-ia.js',
   '/firebase.js',
   '/sync.js',
   '/manifest.json',

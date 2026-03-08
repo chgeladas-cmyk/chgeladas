@@ -55,7 +55,9 @@ const ComandaService = (() => {
       tsAberta:   Date.now(),
     };
     Store.mutate(state => { state.comandas.unshift(c); }, true);
-    SyncService.persist();
+    // FIX: persistNow (imediato) — persist() tem 300ms de debounce durante o qual
+    // um sync remoto podia sobrescrever o estado e apagar a comanda recém-criada.
+    SyncService.persistNow();
     EventBus.emit('comanda:changed');
     return c;
   }
@@ -68,7 +70,7 @@ const ComandaService = (() => {
       const cmd = state.comandas.find(x => String(x.id) === String(id));
       if (cmd) cmd.nome = novoNome.trim();
     }, true);
-    SyncService.persist();
+    SyncService.persistNow();
     EventBus.emit('comanda:changed');
     return true;
   }
@@ -125,7 +127,7 @@ const ComandaService = (() => {
       cmd.itens.push(item);
       cmd.total = _calcTotal(cmd.itens);
     }, true);
-    SyncService.persist();
+    SyncService.persistNow();
     EventBus.emit('comanda:item-changed', cmdId);
     return true;
   }
@@ -140,7 +142,7 @@ const ComandaService = (() => {
       cmd.itens.splice(idx, 1);
       cmd.total = _calcTotal(cmd.itens);
     }, true);
-    SyncService.persist();
+    SyncService.persistNow();
     EventBus.emit('comanda:item-changed', cmdId);
   }
 
@@ -149,11 +151,11 @@ const ComandaService = (() => {
       const idx = state.comandas.findIndex(c => String(c.id) === String(id));
       if (idx !== -1) state.comandas.splice(idx, 1);
     }, true);
-    SyncService.persist();
+    SyncService.persistNow();
     EventBus.emit('comanda:changed');
   }
 
-  function finalizar(cmdId, formaPgto) {
+  function finalizar(cmdId, formaPgto, desconto = 0) {
     const comanda = getById(cmdId);
     if (!comanda || comanda.status !== 'ABERTA') return null;
     if (comanda.itens.length === 0) {
@@ -185,6 +187,7 @@ const ComandaService = (() => {
     const nowStr  = Utils.now();
     const ts      = Utils.timestamp();
     const vendaId = String(Utils.generateId());
+    const descontoFinal = Math.max(0, Math.min(Number(desconto) || 0, comanda.total));
 
     // Debita estoque e registra inventário via Store.mutate()
     Store.mutate(state => {
@@ -209,11 +212,16 @@ const ComandaService = (() => {
       });
     }, true);
 
-    const total = comanda.total;
-    const lucro = comanda.itens.reduce((a, i) => a + (i.preco - (i.custo || 0)), 0);
+    const subtotal = comanda.total;
+    const total    = Math.max(0, subtotal - descontoFinal);
+    // FIX: lucro descontado proporcionalmente ao desconto aplicado
+    const lucroBase = comanda.itens.reduce((a, i) => a + (i.preco - (i.custo || 0)), 0);
+    const lucro     = Math.max(0, lucroBase - descontoFinal);
 
     const venda = {
       id:          vendaId,
+      subtotal,
+      desconto:    descontoFinal,
       total,
       lucro,
       data:        ts,
@@ -485,7 +493,9 @@ const ComandaRenderer = (() => {
    MODAL FECHAR CONTA — Confirmação + pagamento
 ═══════════════════════════════════════════════════════════════════ */
 const ComandaFechamento = (() => {
-  let _pendingId = null;
+  let _pendingId  = null;
+  let _desconto   = 0;
+  let _pagamentos = [];
 
   function abrir(cmdId) {
     const c = ComandaService.getById(cmdId);
@@ -504,7 +514,9 @@ const ComandaFechamento = (() => {
       }
     }
 
-    _pendingId = cmdId;
+    _pendingId  = cmdId;
+    _desconto   = 0;
+    _pagamentos = [];
 
     const nome = Utils.el('cmdFechNome');
     if (nome) nome.textContent = c.nome;
@@ -521,10 +533,118 @@ const ComandaFechamento = (() => {
         </div>`).join('');
     }
 
-    const totalEl = Utils.el('cmdFechTotal');
-    if (totalEl) totalEl.textContent = Utils.formatCurrency(c.total || 0);
+    // Painel de desconto injetado dinamicamente
+    const modalEl = Utils.el('modalCmdFechar');
+    if (modalEl && !Utils.el('_cmdDescontoWrap')) {
+      const dw = document.createElement('div');
+      dw.id        = '_cmdDescontoWrap';
+      dw.className = 'mt-3 mb-2';
+      dw.innerHTML = `
+        <label class="block text-[9px] font-black uppercase text-slate-500 mb-1">Desconto (R$)</label>
+        <div class="flex gap-2">
+          <input id="_cmdDescontoInput" type="number" min="0" step="0.01" placeholder="0,00"
+            class="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-black focus:border-amber-500 outline-none"
+            oninput="cmdAplicarDesconto()"/>
+          <button onclick="cmdAplicarDesconto()"
+            class="px-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 text-[9px] font-black uppercase hover:bg-amber-600/30 transition-all">
+            Aplicar
+          </button>
+        </div>
+        <p id="_cmdDescontoInfo" class="text-[8px] text-amber-400 font-bold mt-1 hidden"></p>`;
+      const totalWrap = Utils.el('cmdFechTotal')?.parentElement;
+      if (totalWrap) totalWrap.parentElement?.insertBefore(dw, totalWrap.nextSibling);
+      else modalEl.insertBefore(dw, modalEl.querySelector('button'));
+    }
 
+    // Painel de pagamentos múltiplos injetado dinamicamente
+    if (modalEl && !Utils.el('_cmdMultiPgtoWrap')) {
+      const mp = document.createElement('div');
+      mp.id        = '_cmdMultiPgtoWrap';
+      mp.className = 'mt-2 mb-2 hidden';
+      mp.innerHTML = `
+        <div class="border-t border-white/10 pt-3">
+          <p class="text-[9px] font-black uppercase text-slate-400 mb-2">Pagamentos Parciais</p>
+          <div id="_cmdPgtosLista" class="space-y-1 mb-2"></div>
+          <p id="_cmdPgtoRestante" class="text-[9px] text-amber-300 font-bold"></p>
+        </div>`;
+      modalEl.appendChild(mp);
+    }
+
+    _atualizarTotalFechamento(c.total);
     UIService.openModal('modalCmdFechar');
+  }
+
+  function _atualizarTotalFechamento(subtotal) {
+    const totalEl     = Utils.el('cmdFechTotal');
+    const subtotalEl  = Utils.el('cmdFechSubtotal');
+    const totalFinal  = Math.max(0, subtotal - _desconto);
+    if (totalEl) totalEl.textContent = Utils.formatCurrency(totalFinal);
+    if (subtotalEl && _desconto > 0) {
+      subtotalEl.textContent = `Subtotal: ${Utils.formatCurrency(subtotal)} · Desconto: -${Utils.formatCurrency(_desconto)}`;
+      subtotalEl.classList.remove('hidden');
+    } else if (subtotalEl) {
+      subtotalEl.classList.add('hidden');
+    }
+  }
+
+  function aplicarDesconto() {
+    const cmdId = _pendingId;
+    if (!cmdId) return;
+    const c   = ComandaService.getById(cmdId);
+    if (!c) return;
+    const inp  = Utils.el('_cmdDescontoInput');
+    const info = Utils.el('_cmdDescontoInfo');
+    const val  = parseFloat(inp?.value) || 0;
+    _desconto  = Math.min(val, c.total);
+    _atualizarTotalFechamento(c.total);
+    if (info) {
+      if (_desconto > 0) {
+        info.textContent = `Desconto de ${Utils.formatCurrency(_desconto)} aplicado`;
+        info.classList.remove('hidden');
+      } else {
+        info.classList.add('hidden');
+      }
+    }
+  }
+
+  function adicionarPagamentoParcial(forma) {
+    const cmdId = _pendingId;
+    if (!cmdId) return;
+    const c   = ComandaService.getById(cmdId);
+    if (!c) return;
+    const totalFinal  = Math.max(0, c.total - _desconto);
+    const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
+    const restante    = totalFinal - totalPgtos;
+    if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
+    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+    if (val <= 0) return;
+    _pagamentos.push({ forma, valor: Math.min(val, restante) });
+    _renderPgtos(totalFinal);
+
+    // Se completo, fecha
+    const novoPgtoTotal = _pagamentos.reduce((a, p) => a + p.valor, 0);
+    if (novoPgtoTotal >= totalFinal - 0.009) {
+      const formaFinal = _pagamentos.length > 1
+        ? _pagamentos.map(p => `${p.forma}(${Utils.formatCurrency(p.valor)})`).join(' + ')
+        : _pagamentos[0].forma;
+      confirmar(formaFinal);
+    }
+  }
+
+  function _renderPgtos(totalFinal) {
+    const lista  = Utils.el('_cmdPgtosLista');
+    const restEl = Utils.el('_cmdPgtoRestante');
+    const wrap   = Utils.el('_cmdMultiPgtoWrap');
+    if (!lista) return;
+    if (_pagamentos.length === 0) { if (wrap) wrap.classList.add('hidden'); return; }
+    if (wrap) wrap.classList.remove('hidden');
+    lista.innerHTML = _pagamentos.map(p =>
+      `<div class="flex justify-between text-[9px] font-bold text-slate-300 bg-slate-900/60 rounded-lg px-3 py-1.5">
+         <span>${p.forma}</span><span class="text-emerald-400">${Utils.formatCurrency(p.valor)}</span>
+       </div>`
+    ).join('');
+    const restante = totalFinal - _pagamentos.reduce((a, p) => a + p.valor, 0);
+    if (restEl) restEl.textContent = `Restante: ${Utils.formatCurrency(Math.max(0, restante))}`;
   }
 
   function confirmar(formaPgto) {
@@ -534,18 +654,20 @@ const ComandaFechamento = (() => {
 
     UIService.closeModal('modalCmdFechar');
 
-    const venda = ComandaService.finalizar(id, formaPgto);
+    // Passa desconto para ComandaService.finalizar
+    const venda = ComandaService.finalizar(id, formaPgto, _desconto);
     if (!venda) return;
 
+    const info = Utils.formatCurrency(venda.total);
     UIService.showToast(
       '✅ Conta Fechada!',
-      `${venda.nomeComanda} · ${Utils.formatCurrency(venda.total)} · ${formaPgto}`
+      `${venda.nomeComanda} · ${info} · ${formaPgto}`
     );
 
     setTimeout(() => ComandaRenderer.voltarLista(), 300);
   }
 
-  return Object.freeze({ abrir, confirmar });
+  return Object.freeze({ abrir, aplicarDesconto, adicionarPagamentoParcial, confirmar });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -558,6 +680,8 @@ EventBus.on('comanda:finalizada',   () => {
   RenderService.updateStats();
   ComandaRenderer.renderComandas();
 });
+// FIX: re-render comandas quando sync remoto aplicar dados novos
+EventBus.on('sync:remote-applied',  () => ComandaRenderer.renderComandas());
 
 /* ═══════════════════════════════════════════════════════════════════
    WINDOW BRIDGES
@@ -608,7 +732,14 @@ function cmdAbrirFechamento() {
   ComandaFechamento.abrir(id);
 }
 
+/** Confirmação simples (modo de pagamento único) */
 function cmdConfirmarPgto(forma) { ComandaFechamento.confirmar(forma); }
+
+/** Adiciona pagamento parcial (modo múltiplas formas) */
+function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagamentoParcial(forma); }
+
+/** Aplica desconto digitado no campo */
+function cmdAplicarDesconto() { ComandaFechamento.aplicarDesconto(); }
 
 function cmdCancelarById(id) {
   const c = ComandaService.getById(id);

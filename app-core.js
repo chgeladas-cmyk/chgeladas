@@ -851,15 +851,52 @@ function _getPdvBloqueio() {
 const CartService = (() => {
   /** @type {Array<CartItem>} */
   let _items = [];
-  let _formaPgto = '';
+  let _formaPgto  = '';
+  /** Desconto global em R$ aplicado ao total */
+  let _desconto   = 0;
+  /** Pagamentos múltiplos: [{forma, valor}] */
+  let _pagamentos = [];
 
   /* ── Getters ─────────────────────────────────────────────── */
-  const getItems    = () => [..._items];
-  const getTotal    = () => _items.reduce((acc, i) => acc + i.preco, 0);
-  const getLucro    = () => _items.reduce((acc, i) => acc + (i.preco - i.custo), 0);
-  const getCount    = () => _items.length;
-  const isEmpty     = () => _items.length === 0;
+  const getItems     = () => [..._items];
+  const getSubtotal  = () => _items.reduce((acc, i) => acc + i.preco, 0);
+  const getDesconto  = () => _desconto;
+  const getTotal     = () => Math.max(0, getSubtotal() - _desconto);
+  const getLucro     = () => Math.max(0, _items.reduce((acc, i) => acc + (i.preco - (i.custo || 0)), 0) - _desconto);
+  const getCount     = () => _items.length;
+  const isEmpty      = () => _items.length === 0;
   const getFormaPgto = () => _formaPgto;
+  const getPagamentos = () => [..._pagamentos];
+
+  /**
+   * Define desconto em R$ sobre o total.
+   * @param {number} valor — valor em R$ (0 = sem desconto)
+   */
+  function setDesconto(valor) {
+    _desconto = Math.max(0, Number(valor) || 0);
+    EventBus.emit('cart:desconto-set', _desconto);
+  }
+
+  /**
+   * Adiciona uma forma de pagamento parcial.
+   * @param {string} forma
+   * @param {number} valor
+   */
+  function addPagamento(forma, valor) {
+    if (!forma || valor <= 0) return;
+    _pagamentos.push({ forma: String(forma), valor: Number(valor) });
+    EventBus.emit('cart:pgto-added', _pagamentos);
+  }
+
+  /** Remove todos os pagamentos parciais */
+  function clearPagamentos() {
+    _pagamentos = [];
+    _formaPgto  = '';
+    EventBus.emit('cart:pgto-cleared');
+  }
+
+  /** Soma dos valores já alocados nos pagamentos */
+  const getTotalPagamentos = () => _pagamentos.reduce((a, p) => a + p.valor, 0);
 
   /* ── Mutações ────────────────────────────────────────────── */
   /**
@@ -930,18 +967,23 @@ const CartService = (() => {
     EventBus.emit('cart:item-removed', removed);
   }
 
-  /** Limpa todos os itens */
+  /** Limpa todos os itens, desconto e pagamentos */
   function clear() {
-    _items = [];
+    _items      = [];
+    _desconto   = 0;
+    _pagamentos = [];
+    _formaPgto  = '';
     EventBus.emit('cart:cleared');
   }
 
   /**
-   * Define a forma de pagamento
+   * Define a forma de pagamento (modo simples — mantido por compatibilidade)
    * @param {string} forma
    */
   function setFormaPgto(forma) {
     _formaPgto = forma;
+    // Modo simples: substitui pagamentos múltiplos
+    _pagamentos = [{ forma, valor: getTotal() }];
     EventBus.emit('cart:pgto-set', forma);
   }
 
@@ -986,12 +1028,17 @@ const CartService = (() => {
     const venda = {
       id:          vendaId,
       total:       getTotal(),
+      subtotal:    getSubtotal(),
+      desconto:    _desconto,
       lucro:       getLucro(),
       data:        ts,
       dataCurta:   today,
       hora:        nowStr,
       itens:       [..._items],
-      formaPgto:   _formaPgto,
+      formaPgto:   _pagamentos.length > 1
+                     ? _pagamentos.map(p => `${p.forma}(${Utils.formatCurrency(p.valor)})`).join(' + ')
+                     : (_formaPgto || (_pagamentos[0]?.forma ?? '')),
+      pagamentos:  [..._pagamentos],
       origem:      'PDV',
     };
 
@@ -1007,8 +1054,10 @@ const CartService = (() => {
   }
 
   return Object.freeze({
-    getItems, getTotal, getLucro, getCount, isEmpty, getFormaPgto,
-    addItem, removeItem, clear, setFormaPgto, checkout,
+    getItems, getSubtotal, getTotal, getDesconto, getLucro,
+    getCount, isEmpty, getFormaPgto, getPagamentos, getTotalPagamentos,
+    addItem, removeItem, clear, setFormaPgto,
+    setDesconto, addPagamento, clearPagamentos, checkout,
   });
 })();
 
@@ -1193,6 +1242,13 @@ const RenderService = (() => {
     // Desktop sidebar
     fillContainer(Utils.el('carrinhoLista'), 'btnLimpar');
     _setText('cartTotal', fmtTotal);
+    if (CartService.getDesconto() > 0) {
+      _setText('cartSubtotal', `Subtotal: ${Utils.formatCurrency(CartService.getSubtotal())}`);
+      _setText('cartDesconto', `Desconto: -${Utils.formatCurrency(CartService.getDesconto())}`);
+    } else {
+      _setText('cartSubtotal', '');
+      _setText('cartDesconto', '');
+    }
     _setText('cartCount', count > 0 ? `${count} ${count === 1 ? 'item' : 'itens'}` : '');
     const badge = Utils.el('cartBadge');
     if (badge) { badge.textContent = count; badge.classList.toggle('hidden', count === 0); }
@@ -1358,9 +1414,77 @@ const VendaService = (() => {
       return;
     }
 
-    const resumoEl = Utils.el('vendaResumo');
-    if (resumoEl) resumoEl.textContent = `Total: ${Utils.formatCurrency(CartService.getTotal())}`;
+    // Limpa pagamentos anteriores
+    CartService.clearPagamentos();
+
+    const subtotalEl = Utils.el('vendaSubtotal');
+    const resumoEl   = Utils.el('vendaResumo');
+    const descontoEl = Utils.el('vendaDescontoWrap');
+
+    if (subtotalEl) subtotalEl.textContent = `Subtotal: ${Utils.formatCurrency(CartService.getSubtotal())}`;
+    if (resumoEl)   resumoEl.textContent   = `Total: ${Utils.formatCurrency(CartService.getTotal())}`;
+
+    // Injeta painel de desconto se ainda não existe no modal
+    const modal = Utils.el('modalPagamento');
+    if (modal && !Utils.el('_pdvDescontoInput')) {
+      const wrap = document.createElement('div');
+      wrap.id        = '_pdvDescontoWrap';
+      wrap.className = 'mt-3 mb-1';
+      wrap.innerHTML = `
+        <label class="block text-[9px] font-black uppercase text-slate-500 mb-1">Desconto (R$)</label>
+        <div class="flex gap-2">
+          <input id="_pdvDescontoInput" type="number" min="0" step="0.01" placeholder="0,00"
+            class="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-black focus:border-blue-500 outline-none"
+            oninput="_pdvAplicarDesconto()"/>
+          <button onclick="_pdvAplicarDesconto()"
+            class="px-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 text-[9px] font-black uppercase hover:bg-amber-600/30 transition-all">
+            Aplicar
+          </button>
+        </div>
+        <p id="_pdvDescontoInfo" class="text-[8px] text-amber-400 font-bold mt-1 hidden"></p>`;
+      // Insere antes dos botões de pagamento
+      const firstBtn = modal.querySelector('button[onclick*="confirmarPagamento"]') ||
+                       modal.querySelector('[class*="grid"]') ||
+                       modal.lastElementChild;
+      modal.insertBefore(wrap, firstBtn?.parentElement ?? firstBtn ?? null);
+    }
+
+    // Injeta seção de pagamento múltiplo
+    if (modal && !Utils.el('_pdvMultiPgtoWrap')) {
+      const mp = document.createElement('div');
+      mp.id        = '_pdvMultiPgtoWrap';
+      mp.className = 'mt-2 mb-2 hidden';
+      mp.innerHTML = `
+        <div class="border-t border-white/10 pt-3">
+          <p class="text-[9px] font-black uppercase text-slate-400 mb-2">Divisão de Pagamento</p>
+          <div id="_pdvPgtosLista" class="space-y-1 mb-2"></div>
+          <p id="_pdvPgtoRestante" class="text-[9px] text-blue-300 font-bold mb-2">Restante: —</p>
+        </div>`;
+      modal.appendChild(mp);
+    }
+
     UIService.openModal('modalPagamento');
+  }
+
+  /** Aplica desconto digitado no campo */
+  function _aplicarDesconto() {
+    const inp  = Utils.el('_pdvDescontoInput');
+    const info = Utils.el('_pdvDescontoInfo');
+    const resumoEl = Utils.el('vendaResumo');
+    if (!inp) return;
+    const val = parseFloat(inp.value) || 0;
+    const max = CartService.getSubtotal();
+    const descFinal = Math.min(val, max);
+    CartService.setDesconto(descFinal);
+    if (info) {
+      if (descFinal > 0) {
+        info.textContent = `Desconto: −${Utils.formatCurrency(descFinal)} · Novo total: ${Utils.formatCurrency(CartService.getTotal())}`;
+        info.classList.remove('hidden');
+      } else {
+        info.classList.add('hidden');
+      }
+    }
+    if (resumoEl) resumoEl.textContent = `Total: ${Utils.formatCurrency(CartService.getTotal())}`;
   }
 
   /**
@@ -1371,6 +1495,50 @@ const VendaService = (() => {
     CartService.setFormaPgto(forma);
     UIService.closeModal('modalPagamento');
     finalizarVenda();
+  }
+
+  /**
+   * Adiciona pagamento parcial ao total (suporte a múltiplas formas)
+   * @param {string} forma
+   */
+  function adicionarPagamentoParcial(forma) {
+    const restante = CartService.getTotal() - CartService.getTotalPagamentos();
+    if (restante <= 0.009) {
+      UIService.showToast('Atenção', 'Total já foi coberto pelos pagamentos', 'warning');
+      return;
+    }
+    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+    if (val <= 0) return;
+    CartService.addPagamento(forma, Math.min(val, restante));
+    _renderMultiPgto();
+
+    // Se todo o total foi coberto, finaliza
+    if (CartService.getTotalPagamentos() >= CartService.getTotal() - 0.009) {
+      UIService.closeModal('modalPagamento');
+      finalizarVenda();
+    }
+  }
+
+  /** Atualiza lista de pagamentos parciais no modal */
+  function _renderMultiPgto() {
+    const lista  = Utils.el('_pdvPgtosLista');
+    const restEl = Utils.el('_pdvPgtoRestante');
+    const wrap   = Utils.el('_pdvMultiPgtoWrap');
+    if (!lista) return;
+    const pgtos = CartService.getPagamentos();
+    if (pgtos.length === 0) {
+      if (wrap) wrap.classList.add('hidden');
+      return;
+    }
+    if (wrap) wrap.classList.remove('hidden');
+    lista.innerHTML = pgtos.map((p, i) =>
+      `<div class="flex justify-between text-[9px] font-bold text-slate-300 bg-slate-900/60 rounded-lg px-3 py-1.5">
+        <span>${p.forma}</span>
+        <span class="text-emerald-400">${Utils.formatCurrency(p.valor)}</span>
+       </div>`
+    ).join('');
+    const restante = CartService.getTotal() - CartService.getTotalPagamentos();
+    if (restEl) restEl.textContent = `Restante: ${Utils.formatCurrency(Math.max(0, restante))}`;
   }
 
   /** Executa checkout com guard duplo-clique */
@@ -1412,7 +1580,16 @@ const VendaService = (() => {
       txt += `${i.label === 'UNID' ? '1x' : i.label} ${i.nome} ... ${Utils.formatCurrency(i.preco)}\n`;
     });
     txt += `${'─'.repeat(36)}\n`;
-    txt += `Forma de Pgto: ${_lastSale.formaPgto || '—'}\n`;
+    if ((_lastSale.desconto || 0) > 0) {
+      txt += `Subtotal: ${Utils.formatCurrency(_lastSale.subtotal || _lastSale.total)}\n`;
+      txt += `Desconto: -${Utils.formatCurrency(_lastSale.desconto)}\n`;
+    }
+    if ((_lastSale.pagamentos || []).length > 1) {
+      txt += `Pagamentos:\n`;
+      _lastSale.pagamentos.forEach(p => { txt += `  · ${p.forma}: ${Utils.formatCurrency(p.valor)}\n`; });
+    } else {
+      txt += `Forma de Pgto: ${_lastSale.formaPgto || '—'}\n`;
+    }
     txt += `TOTAL: ${Utils.formatCurrency(_lastSale.total)}\n`;
     Utils.downloadBlob(txt, 'text/plain', `Venda_${_lastSale.id}.txt`);
   }
@@ -1425,13 +1602,25 @@ const VendaService = (() => {
     let msg = `*CH GELADAS | COMPROVANTE*\n📅 ${_lastSale.data}\n${'—'.repeat(26)}\n`;
     _lastSale.itens.forEach(i => { msg += `${i.label === 'UNID' ? '1x' : i.label} ${i.nome} ... ${Utils.formatCurrency(i.preco)}\n`; });
     msg += `${'—'.repeat(26)}\n`;
-    if (_lastSale.formaPgto) msg += `Pagamento: ${_lastSale.formaPgto}\n`;
+    if ((_lastSale.desconto || 0) > 0) {
+      msg += `Subtotal: ${Utils.formatCurrency(_lastSale.subtotal || _lastSale.total)}\n`;
+      msg += `🏷️ Desconto: -${Utils.formatCurrency(_lastSale.desconto)}\n`;
+    }
+    if ((_lastSale.pagamentos || []).length > 1) {
+      _lastSale.pagamentos.forEach(p => { msg += `💳 ${p.forma}: ${Utils.formatCurrency(p.valor)}\n`; });
+    } else if (_lastSale.formaPgto) {
+      msg += `Pagamento: ${_lastSale.formaPgto}\n`;
+    }
     msg += `*TOTAL: ${Utils.formatCurrency(_lastSale.total)}*\nObrigado pela preferência! 🍺`;
     Utils.openWhatsApp(config.whatsapp, msg);
     fecharModalVenda();
   }
 
-  return Object.freeze({ abrirPagamento, confirmarPagamento, finalizarVenda, fecharModalVenda, baixarComprovante, enviarWhatsapp, getLastSale });
+  return Object.freeze({
+    abrirPagamento, confirmarPagamento, adicionarPagamentoParcial,
+    _aplicarDesconto, _renderMultiPgto,
+    finalizarVenda, fecharModalVenda, baixarComprovante, enviarWhatsapp, getLastSale,
+  });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1660,12 +1849,14 @@ function fecharDrawer() {
   }, 320);
 }
 
-function abrirPagamento()        { VendaService.abrirPagamento(); }
-function confirmarPagamento(f)   { VendaService.confirmarPagamento(f); }
-function finalizarVenda()        { VendaService.finalizarVenda(); }
-function fecharModalVenda()      { VendaService.fecharModalVenda(); }
-function baixarTxt()             { VendaService.baixarComprovante(); }
-function enviarWhatsapp()        { VendaService.enviarWhatsapp(); }
+function abrirPagamento()              { VendaService.abrirPagamento(); }
+function confirmarPagamento(f)         { VendaService.confirmarPagamento(f); }
+function adicionarPagamentoParcial(f)  { VendaService.adicionarPagamentoParcial(f); }
+function _pdvAplicarDesconto()         { VendaService._aplicarDesconto(); }
+function finalizarVenda()              { VendaService.finalizarVenda(); }
+function fecharModalVenda()            { VendaService.fecharModalVenda(); }
+function baixarTxt()                   { VendaService.baixarComprovante(); }
+function enviarWhatsapp()              { VendaService.enviarWhatsapp(); }
 
 function salvarZap() {
   const raw = Utils.el('zapNum')?.value || '';
@@ -1790,7 +1981,8 @@ function addCfgCategoria() {
     UIService.showToast('Categoria duplicada', val, 'warning'); return;
   }
   cats.push(val);
-  Store.mutate({ config: { ...cfg, categorias: cats } });
+  // FIX: mutate deve receber função, não objeto — objeto era ignorado silenciosamente
+  Store.mutate(state => { state.config = { ...cfg, categorias: cats }; });
   if (inp) inp.value = '';
   _renderCfgCategorias();
 }
@@ -1800,7 +1992,8 @@ function removeCfgCategoria(idx) {
   const cfg  = Store.Selectors.getConfig();
   const cats = [...(cfg.categorias || [])];
   cats.splice(idx, 1);
-  Store.mutate({ config: { ...cfg, categorias: cats } });
+  // FIX: mutate deve receber função, não objeto
+  Store.mutate(state => { state.config = { ...cfg, categorias: cats }; });
   _renderCfgCategorias();
 }
 
@@ -1830,7 +2023,8 @@ async function salvarConfig() {
   if (pinA) cfg.pinHashAdmin = await CryptoService.sha256(pinA);
   if (pinC) cfg.pinHashPdv   = await CryptoService.sha256(pinC);
 
-  Store.mutate({ config: cfg });
+  // FIX: mutate deve receber função, não objeto — objeto era ignorado silenciosamente
+  Store.mutate(state => { state.config = { ...cfg }; });
   SyncService.persist();
 
   if (nome) document.title = nome;

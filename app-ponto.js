@@ -292,7 +292,7 @@ const CaixaService = (() => {
   }
 
   /**
-   * Confirma fechamento de caixa
+   * Confirma fechamento de caixa e envia relatório completo do dia
    */
   function confirmarFechamento() {
     const raw = Utils.el('valorFinalCaixa')?.value || '0';
@@ -303,6 +303,173 @@ const CaixaService = (() => {
     UIService.closeModal('modalFecharCaixa');
     UIService.showToast('Caixa Fechado', `Valor apurado: ${Utils.formatCurrency(val)}`, 'warning');
     EventBus.emit('caixa:fechado', val);
+
+    // FIX: gerar e enviar relatório completo do dia ao fechar o caixa
+    setTimeout(() => _enviarRelatorioDia(val), 600);
+  }
+
+  /**
+   * Gera o relatório completo do dia e envia via Telegram + WhatsApp.
+   * Também oferece download TXT.
+   * @param {number} valorApurado
+   */
+  function _enviarRelatorioDia(valorApurado) {
+    const hoje = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    })();
+
+    function _dataVenda(v) {
+      const raw = v.dataCurta || (v.data || '').slice(0, 10) || '';
+      if (raw.includes('-')) return raw.slice(0, 10);
+      const [d, m, y] = raw.split('/');
+      return y ? `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}` : raw;
+    }
+
+    const vendasHoje = Store.Selectors.getVendas().filter(v => _dataVenda(v) === hoje);
+    const cfg        = Store.Selectors.getConfig();
+    const nomeLoja   = cfg.nome || 'CH Geladas';
+
+    const totalBruto   = vendasHoje.reduce((a, v) => a + (v.total  || 0), 0);
+    const totalLucro   = vendasHoje.reduce((a, v) => a + (v.lucro  || 0), 0);
+    const totalDesc    = vendasHoje.reduce((a, v) => a + (v.desconto || 0), 0);
+    const qtdVendas    = vendasHoje.length;
+    const ticket       = qtdVendas > 0 ? totalBruto / qtdVendas : 0;
+
+    // Abertura de caixa
+    const caixaLogs  = Store.Selectors.getCaixa() || [];
+    const abertura   = caixaLogs.find(c => c.tipo === 'ABERTURA');
+    const trocoInicial = abertura ? parseFloat(abertura.valor) || 0 : 0;
+
+    // Formas de pagamento
+    const formasTotais = {};
+    vendasHoje.forEach(v => {
+      if (v.pagamentos && v.pagamentos.length > 0) {
+        v.pagamentos.forEach(p => {
+          formasTotais[p.forma] = (formasTotais[p.forma] || 0) + p.valor;
+        });
+      } else {
+        const forma = v.formaPgto || 'Não informado';
+        formasTotais[forma] = (formasTotais[forma] || 0) + (v.total || 0);
+      }
+    });
+
+    // Top produtos
+    const prodMap = {};
+    vendasHoje.forEach(v => {
+      (v.itens || []).forEach(i => {
+        if (!prodMap[i.nome]) prodMap[i.nome] = { qtd: 0, total: 0 };
+        prodMap[i.nome].qtd   += (i.desconto || 1);
+        prodMap[i.nome].total += (i.preco || 0);
+      });
+    });
+    const topProds = Object.entries(prodMap)
+      .sort(([,a],[,b]) => b.total - a.total)
+      .slice(0, 5);
+
+    // Origens
+    const qtdPdv      = vendasHoje.filter(v => v.origem === 'PDV').length;
+    const qtdComanda  = vendasHoje.filter(v => v.origem === 'COMANDA').length;
+    const qtdDelivery = vendasHoje.filter(v => v.origem === 'DELIVERY').length;
+
+    const SEP  = '═'.repeat(40);
+    const sep  = '─'.repeat(40);
+    const fmt  = v => Utils.formatCurrency(v);
+    const data = hoje.split('-').reverse().join('/');
+
+    let txt = `${SEP}\n`;
+    txt += `  RELATÓRIO DIÁRIO — ${nomeLoja}\n`;
+    txt += `  Data: ${data}   Fechamento: ${Utils.now()}\n`;
+    txt += `${SEP}\n\n`;
+
+    txt += `RESUMO DO DIA\n${sep}\n`;
+    txt += `Faturamento bruto:   ${fmt(totalBruto)}\n`;
+    txt += `Lucro líquido:       ${fmt(totalLucro)}\n`;
+    txt += `Margem:              ${totalBruto > 0 ? ((totalLucro/totalBruto)*100).toFixed(1) : 0}%\n`;
+    txt += `Total de descontos:  ${fmt(totalDesc)}\n`;
+    txt += `Nº de vendas:        ${qtdVendas}\n`;
+    txt += `Ticket médio:        ${fmt(ticket)}\n`;
+    txt += `\n`;
+
+    txt += `CAIXA\n${sep}\n`;
+    txt += `Troco inicial:       ${fmt(trocoInicial)}\n`;
+    txt += `Valor apurado:       ${fmt(valorApurado)}\n`;
+    const FORMAS_DIN = ['dinheiro','espécie','especie','cash'];
+    const totalDin = Object.entries(formasTotais)
+      .filter(([k]) => FORMAS_DIN.includes(k.toLowerCase()))
+      .reduce((a,[,v]) => a + v, 0);
+    txt += `Esperado em caixa:   ${fmt(trocoInicial + totalDin)}\n`;
+    const diff = valorApurado - (trocoInicial + totalDin);
+    txt += `Diferença:           ${diff >= 0 ? '+' : ''}${fmt(diff)}\n`;
+    txt += `\n`;
+
+    txt += `ORIGENS\n${sep}\n`;
+    txt += `PDV: ${qtdPdv}  ·  Comanda: ${qtdComanda}  ·  Delivery: ${qtdDelivery}\n\n`;
+
+    txt += `FORMAS DE PAGAMENTO\n${sep}\n`;
+    Object.entries(formasTotais).forEach(([forma, val]) => {
+      txt += `${String(forma).padEnd(20)} ${fmt(val)}\n`;
+    });
+    txt += `\n`;
+
+    if (topProds.length > 0) {
+      txt += `TOP PRODUTOS\n${sep}\n`;
+      topProds.forEach(([nome, d]) => {
+        txt += `${String(nome).padEnd(24)} ${String(d.qtd).padStart(4)} un  ${fmt(d.total)}\n`;
+      });
+      txt += `\n`;
+    }
+
+    txt += `VENDAS INDIVIDUAIS (${qtdVendas})\n${sep}\n`;
+    [...vendasHoje].reverse().forEach(v => {
+      txt += `\n#${String(v.id).slice(-6)}  ${v.data}  ${v.hora || ''}  [${v.origem || 'PDV'}]\n`;
+      (v.itens || []).forEach(i => {
+        txt += `  · ${String(i.nome || '').padEnd(22)} ${fmt(i.preco)}\n`;
+      });
+      if ((v.desconto || 0) > 0) txt += `  Desconto: -${fmt(v.desconto)}\n`;
+      txt += `  TOTAL: ${fmt(v.total)}   Pgto: ${v.formaPgto || '—'}\n`;
+    });
+
+    txt += `\n${SEP}\n`;
+    txt += `  Gerado em ${Utils.timestamp()}\n`;
+    txt += `${SEP}\n`;
+
+    // Oferece download TXT
+    Utils.downloadBlob(txt, 'text/plain;charset=utf-8;', `Relatorio_${hoje}.txt`);
+    UIService.showToast('📋 Relatório do Dia', 'Baixando relatório completo...', 'success');
+
+    // Envia via Telegram se configurado
+    const tg = cfg.telegram;
+    if (tg?.token && tg?.chatId) {
+      const msgTg = `📊 *FECHAMENTO DE CAIXA — ${nomeLoja}*\n📅 ${data}\n\n` +
+        `💰 Faturamento: *${fmt(totalBruto)}*\n` +
+        `📈 Lucro: *${fmt(totalLucro)}* (${totalBruto > 0 ? ((totalLucro/totalBruto)*100).toFixed(1) : 0}%)\n` +
+        `🧾 Vendas: *${qtdVendas}* | Ticket: ${fmt(ticket)}\n` +
+        (totalDesc > 0 ? `🏷️ Descontos: -${fmt(totalDesc)}\n` : '') +
+        `🏦 Caixa apurado: *${fmt(valorApurado)}*\n\n` +
+        `PDV: ${qtdPdv} | Comanda: ${qtdComanda} | Delivery: ${qtdDelivery}\n\n` +
+        Object.entries(formasTotais).map(([f,v]) => `${f}: ${fmt(v)}`).join('\n');
+
+      fetch(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: tg.chatId, text: msgTg, parse_mode: 'Markdown' }),
+      }).catch(e => console.warn('[CaixaService] Telegram report failed:', e));
+    }
+
+    // Envia via WhatsApp (admin) se configurado
+    if (cfg.whatsapp) {
+      const msgWa = `*📊 FECHAMENTO — ${nomeLoja}*\n📅 ${data}\n` +
+        `${'—'.repeat(28)}\n` +
+        `💰 Faturamento: *${fmt(totalBruto)}*\n` +
+        `📈 Lucro: *${fmt(totalLucro)}*\n` +
+        `🧾 Vendas: ${qtdVendas} | Ticket: ${fmt(ticket)}\n` +
+        (totalDesc > 0 ? `🏷️ Descontos: -${fmt(totalDesc)}\n` : '') +
+        `🏦 Caixa: *${fmt(valorApurado)}*\n` +
+        `${'—'.repeat(28)}\n` +
+        Object.entries(formasTotais).map(([f,v]) => `${f}: ${fmt(v)}`).join('\n');
+      Utils.openWhatsApp(cfg.whatsapp, msgWa);
+    }
   }
 
   /**
@@ -486,8 +653,11 @@ const InventoryRenderer = (() => {
     const todos      = Store.Selectors.getInventario() || [];
     const filtrados  = filtroData
       ? todos.filter(r => {
-          const [d, m, y] = (r.data || '').split('/');
-          return `${y}-${m}-${d}` === filtroData;
+          const raw = r.data || '';
+          // FIX: suportar tanto YYYY-MM-DD (novo) quanto DD/MM/YYYY (legado)
+          if (raw.includes('-')) return raw.slice(0, 10) === filtroData;
+          const [d, m, y] = raw.split('/');
+          return y ? `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}` === filtroData : false;
         })
       : todos;
 
