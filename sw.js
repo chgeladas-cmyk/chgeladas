@@ -43,8 +43,8 @@ const APP_SHELL = [
   '/firebase.js',
   '/sync.js',
   '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  '/ícone-192.png',
+  '/ícone-512.png',
 ];
 
 /** CDN externos: servidos Stale-While-Revalidate */
