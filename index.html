@@ -467,6 +467,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="text-[9px] uppercase font-black tracking-widest mb-1" id="trocoResultLabel">Troco</p>
         <p id="trocoResultVal" class="text-3xl font-black">R$ 0,00</p>
       </div>
+      <!-- Complementar pagamento quando há FALTA -->
+      <div id="trocoComplemento" class="hidden">
+        <p class="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-2">Complementar o restante com:</p>
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="confirmarTrocoMisto('Pix')"     class="py-3 rounded-xl bg-blue-600/20 text-blue-300 border border-blue-500/30 font-black text-[10px] uppercase hover:bg-blue-600/40 transition-all active:scale-95"><i class="fas fa-qrcode mr-1"></i>Pix</button>
+          <button onclick="confirmarTrocoMisto('Débito')"  class="py-3 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 font-black text-[10px] uppercase hover:bg-purple-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Débito</button>
+          <button onclick="confirmarTrocoMisto('Crédito')" class="py-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 font-black text-[10px] uppercase hover:bg-amber-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Crédito</button>
+        </div>
+      </div>
       <!-- Sugestões rápidas -->
       <div>
         <p class="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-2">Valores Rápidos</p>
@@ -1563,19 +1572,12 @@ document.addEventListener('DOMContentLoaded', () => {
         <span class="text-[10px] font-black uppercase text-slate-500">Total</span>
         <span id="cmdFechTotal" class="text-lg font-black text-white">R$ 0,00</span>
       </div>
-      <p id="cmdFechSubtotal" class="text-[9px] text-amber-400 font-bold hidden"></p>
       <p class="text-[10px] text-slate-500 font-bold uppercase text-center pt-1">Forma de pagamento</p>
-      <!-- Input de valor parcial -->
-      <div class="flex items-center gap-2">
-        <input id="cmdPgtoValorInput" type="number" min="0" step="0.01" placeholder="Valor parcial (vazio = total restante)"
-          class="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-black focus:border-amber-500 outline-none"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();}" />
-      </div>
       <div class="grid grid-cols-2 gap-2">
-        <button onclick="cmdAdicionarPgto('Dinheiro')"   class="py-3 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-black text-xs uppercase hover:bg-emerald-600/40 transition-all active:scale-95"><i class="fas fa-money-bill mr-1"></i>Dinheiro</button>
-        <button onclick="cmdAdicionarPgto('Pix')"        class="py-3 rounded-xl bg-blue-600/20 text-blue-300 border border-blue-500/30 font-black text-xs uppercase hover:bg-blue-600/40 transition-all active:scale-95"><i class="fas fa-qrcode mr-1"></i>Pix</button>
-        <button onclick="cmdAdicionarPgto('Débito')"     class="py-3 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 font-black text-xs uppercase hover:bg-purple-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Débito</button>
-        <button onclick="cmdAdicionarPgto('Crédito')"    class="py-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 font-black text-xs uppercase hover:bg-amber-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Crédito</button>
+        <button onclick="cmdConfirmarPgto('Dinheiro')"   class="py-3 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-black text-xs uppercase hover:bg-emerald-600/40 transition-all active:scale-95"><i class="fas fa-money-bill mr-1"></i>Dinheiro</button>
+        <button onclick="cmdConfirmarPgto('Pix')"        class="py-3 rounded-xl bg-blue-600/20 text-blue-300 border border-blue-500/30 font-black text-xs uppercase hover:bg-blue-600/40 transition-all active:scale-95"><i class="fas fa-qrcode mr-1"></i>Pix</button>
+        <button onclick="cmdConfirmarPgto('Débito')"     class="py-3 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 font-black text-xs uppercase hover:bg-purple-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Débito</button>
+        <button onclick="cmdConfirmarPgto('Crédito')"    class="py-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 font-black text-xs uppercase hover:bg-amber-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Crédito</button>
       </div>
     </div>
   </div>
@@ -3116,6 +3118,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (recEl) { recEl.value = ''; }
     const box = document.getElementById('trocoResultBox');
     if (box) box.classList.add('hidden');
+    const complemento = document.getElementById('trocoComplemento');
+    if (complemento) complemento.classList.add('hidden');
+    const btnConf = document.getElementById('btnConfirmarTroco');
+    if (btnConf) btnConf.disabled = true;
 
     // Gera sugestões de valores
     _gerarSugestoes(total);
@@ -3138,34 +3144,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const valEl     = document.getElementById('trocoResultVal');
     const labelEl   = document.getElementById('trocoResultLabel');
     const btnConf   = document.getElementById('btnConfirmarTroco');
+    const complemento = document.getElementById('trocoComplemento');
 
     if (!box || !valEl) return;
 
-    if (recebido <= 0) { box.classList.add('hidden'); return; }
+    if (recebido <= 0) {
+      box.classList.add('hidden');
+      if (complemento) complemento.classList.add('hidden');
+      return;
+    }
 
     box.classList.remove('hidden');
 
     const troco = recebido - total;
 
     if (troco < 0) {
-      // Valor insuficiente
+      // Valor insuficiente — mostrar opções de complemento
       box.className = 'rounded-2xl p-4 text-center bg-red-500/10 border border-red-500/20';
       if (labelEl) { labelEl.textContent = 'Falta'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-red-400'; }
       valEl.textContent = Utils.formatCurrency(Math.abs(troco));
       valEl.className   = 'text-3xl font-black text-red-400';
       if (btnConf) btnConf.disabled = true;
+      if (complemento) complemento.classList.remove('hidden');
     } else if (troco === 0) {
       box.className = 'rounded-2xl p-4 text-center bg-blue-500/10 border border-blue-500/20';
       if (labelEl) { labelEl.textContent = 'Valor Exato!'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-blue-400'; }
       valEl.textContent = 'Sem troco 👌';
       valEl.className   = 'text-2xl font-black text-blue-400';
       if (btnConf) btnConf.disabled = false;
+      if (complemento) complemento.classList.add('hidden');
     } else {
       box.className = 'rounded-2xl p-4 text-center bg-emerald-500/10 border border-emerald-500/20';
       if (labelEl) { labelEl.textContent = 'Troco'; labelEl.className = 'text-[9px] uppercase font-black tracking-widest mb-1 text-emerald-400'; }
       valEl.textContent = Utils.formatCurrency(troco);
       valEl.className   = 'text-3xl font-black text-emerald-400';
       if (btnConf) btnConf.disabled = false;
+      if (complemento) complemento.classList.add('hidden');
     }
   };
 
@@ -3180,6 +3194,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const troco = recebido - total;
     const desc  = troco > 0 ? ` (Troco: ${Utils.formatCurrency(troco)})` : '';
     confirmarPagamento(`Dinheiro${desc}`);
+  };
+
+  // Confirma pagamento misto: Dinheiro (parcial) + outra forma para o restante
+  window.confirmarTrocoMisto = function(formaRestante) {
+    const total    = CartService.getTotal();
+    const recebido = parseFloat(document.getElementById('trocoRecebido')?.value) || 0;
+    if (recebido <= 0) {
+      UIService.showToast('Atenção', 'Informe o valor em dinheiro primeiro', 'warning');
+      return;
+    }
+    const restante = +(total - recebido).toFixed(2);
+    UIService.closeModal('modalTroco');
+    CartService.clearPagamentos();
+    CartService.addPagamento('Dinheiro', recebido);
+    CartService.addPagamento(formaRestante, restante);
+    const formaFinal = `Dinheiro(${Utils.formatCurrency(recebido)}) + ${formaRestante}(${Utils.formatCurrency(restante)})`;
+    CartService.setFormaPgto(formaFinal);
+    VendaService.finalizarVenda();
   };
 
   // Define valor rápido no input
