@@ -615,7 +615,7 @@ const ComandaFechamento = (() => {
     }
   }
 
-  function adicionarPagamentoParcial(forma) {
+  async function adicionarPagamentoParcial(forma) {
     const cmdId = _pendingId;
     if (!cmdId) return;
     const c   = ComandaService.getById(cmdId);
@@ -624,7 +624,20 @@ const ComandaFechamento = (() => {
     const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
     const restante    = totalFinal - totalPgtos;
     if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
-    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+
+    const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
+    const str = await Dialog.prompt({
+      title:        `Valor — ${forma}`,
+      message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
+      placeholder:  restante.toFixed(2),
+      defaultValue: restante.toFixed(2),
+      confirmLabel: 'Adicionar',
+      icon:         icones[forma] || 'fa-hand-holding-usd',
+      iconBg:       'bg-emerald-500/15',
+      iconColor:    'text-emerald-400',
+    });
+    if (!str) return;
+    const val = parseFloat(String(str).replace(',', '.')) || 0;
     if (val <= 0) return;
     _pagamentos.push({ forma, valor: Math.min(val, restante) });
     _renderPgtos(totalFinal);
@@ -697,8 +710,17 @@ EventBus.on('sync:remote-applied',  () => ComandaRenderer.renderComandas());
 
 function renderComandas() { ComandaRenderer.renderComandas(); }
 
-function cmdNova() {
-  const nome = prompt('Nome da comanda (Mesa, grupo, cliente...):', '');
+async function cmdNova() {
+  const nome = await Dialog.prompt({
+    title:        'Nova Comanda',
+    message:      'Nome da mesa, grupo ou cliente',
+    placeholder:  'Ex: Mesa 1, Delivery João...',
+    confirmLabel: 'Criar',
+    icon:         'fa-receipt',
+    iconBg:       'bg-purple-500/15',
+    iconColor:    'text-purple-400',
+    maxLength:    50,
+  });
   if (nome === null) return;
   const c = ComandaService.nova(nome);
   UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
@@ -708,15 +730,22 @@ function cmdNova() {
 function cmdAbrirDetalhe(id)  { ComandaRenderer.abrirDetalhe(id); }
 function cmdVoltarLista()     { ComandaRenderer.voltarLista(); }
 
-function cmdRenomear() {
+async function cmdRenomear() {
   const id = ComandaRenderer.getAtivaId();
   if (!id) return;
   const c = ComandaService.getById(id);
   if (!c) return;
-  const novo = prompt('Novo nome:', c.nome);
-  // FIX 11: verificar null antes de .trim() — caso contrário null?.trim() retorna
-  // undefined (truthy no !), tornando o check "novo === null" inalcançável.
-  if (novo === null || !novo.trim()) return;
+  const novo = await Dialog.prompt({
+    title:        'Renomear Comanda',
+    placeholder:  c.nome,
+    defaultValue: c.nome,
+    confirmLabel: 'Renomear',
+    icon:         'fa-pen',
+    iconBg:       'bg-blue-500/10',
+    iconColor:    'text-blue-400',
+    maxLength:    50,
+  });
+  if (!novo || !novo.trim()) return;
   ComandaService.renomear(id, novo);
   UIService.showToast('Renomeada', novo.trim());
 }
@@ -749,13 +778,18 @@ function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagame
 /** Aplica desconto digitado no campo */
 function cmdAplicarDesconto() { ComandaFechamento.aplicarDesconto(); }
 
-function cmdCancelarById(id) {
+async function cmdCancelarById(id) {
   const c = ComandaService.getById(id);
   if (!c) return;
-  const msg = c.itens.length > 0
-    ? `Cancelar "${c.nome}"?\n${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
-    : `Cancelar a comanda "${c.nome}"?`;
-  if (!confirm(msg)) return;
+  const ok = await Dialog.danger({
+    title:        `Cancelar "${c.nome}"?`,
+    message:      c.itens.length > 0
+      ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)} — Esta ação não pode ser desfeita.`
+      : 'Esta ação não pode ser desfeita.',
+    icon:         'fa-times-circle',
+    confirmLabel: 'Cancelar Comanda',
+  });
+  if (!ok) return;
   ComandaService.excluir(id);
   UIService.showToast('Comanda cancelada', c.nome, 'warning');
 }

@@ -205,11 +205,17 @@ const DeliveryService = (() => {
   /**
    * @param {string|number} pedId
    */
-  function cancelarPedido(pedId) {
+  async function cancelarPedido(pedId) {
     const pedido = Store.Selectors.getPedidoById(pedId);
     if (!pedido) return;
 
-    if (!confirm(`Cancelar Pedido #${pedido.num}?\nO estoque será devolvido automaticamente.`)) return;
+    const ok = await Dialog.danger({
+      title:        `Cancelar Pedido #${pedido.num}?`,
+      message:      'O estoque será devolvido automaticamente.',
+      icon:         'fa-ban',
+      confirmLabel: 'Cancelar Pedido',
+    });
+    if (!ok) return;
 
     // Devolve estoque apenas se ainda não entregue
     if (pedido.status !== DeliveryConstants.STATUS.ENTREGUE) {
@@ -253,10 +259,17 @@ const DeliveryService = (() => {
     EventBus.emit('delivery:cancelado', Store.Selectors.getPedidoById(pedId));
   }
 
-  function excluirPedido(pedId) {
+  async function excluirPedido(pedId) {
     const pedido = Store.Selectors.getPedidoById(pedId);
     if (!pedido) return;
-    if (!confirm(`Excluir permanentemente o Pedido #${pedido.num}?\nEsta ação não pode ser desfeita.`)) return;
+
+    const ok = await Dialog.danger({
+      title:        `Excluir Pedido #${pedido.num}?`,
+      message:      'Esta ação não pode ser desfeita. O estoque será devolvido se aplicável.',
+      icon:         'fa-trash',
+      confirmLabel: 'Excluir Pedido',
+    });
+    if (!ok) return;
 
     const statusesQueDevolvem = [DeliveryConstants.STATUS.NOVO, DeliveryConstants.STATUS.PREPARANDO, DeliveryConstants.STATUS.A_CAMINHO];
     Store.mutate(state => {
@@ -549,7 +562,7 @@ const DeliveryRenderer = (() => {
 
   function _renderKPIs() {
     const pedidos = Store.Selectors.getPedidos();
-    const hoje    = Utils.today();
+    const hoje    = Utils.todayISO();
     _setText('dlvNovos', pedidos.filter(p => p.status === 'NOVO').length);
     _setText('dlvPrep',  pedidos.filter(p => p.status === 'PREPARANDO').length);
     _setText('dlvRoad',  pedidos.filter(p => p.status === 'A_CAMINHO').length);

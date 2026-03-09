@@ -34,7 +34,7 @@ const FIRESTORE_DOC_ID     = 'sistema';
 
 const FIREBASE_WAIT_MS     = 5_000;   // timeout aguardando Firebase inicializar
 const BACKUP_DEBOUNCE_MS   = 1_500;   // debounce de escrita no Firestore
-const BACKUP_TIMEOUT_MS    = 12_000;  // timeout máximo por operação
+const BACKUP_TIMEOUT_MS    = 25_000;  // timeout máximo por operação (aumentado: 12→25s)
 const SNAPSHOT_MIN_GAP_MS  = 10_000;  // FIX: aumentado de 2s→10s para proteger saves locais
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -294,12 +294,21 @@ async function _startRealtimeListener() {
       },
 
       (err) => {
-        // Listener morreu (ex: conexão caiu)
-        _isOffline = true;
-        ConnectivityUI.set('error');
-        console.warn('[Sync] onSnapshot erro:', err.message);
+        // O Firestore WebChannel emite erros 400 durante reconexão NORMAL —
+        // isso não indica falha real. Só marcamos erro visual em falhas permanentes.
+        const isTransient = !err.code || err.code === 'unavailable' ||
+                            (err.message && err.message.includes('400'));
 
-        // Tenta reconectar em 30s
+        if (isTransient) {
+          // Silencioso: não altera badge. O backup OK já reflete conectividade real.
+          console.info('[Sync] WebChannel reset (transitório) — reconectando silenciosamente...');
+        } else {
+          _isOffline = true;
+          ConnectivityUI.set('error');
+          console.warn('[Sync] onSnapshot erro permanente:', err.code, err.message);
+        }
+
+        // Reconecta em 30s em qualquer caso
         setTimeout(_startRealtimeListener, 30_000);
       }
     );

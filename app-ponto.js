@@ -92,10 +92,16 @@ const PontoService = (() => {
    * Remove registro de ponto
    * @param {number|string} id
    */
-  function apagar(id) {
+  async function apagar(id) {
     const reg = Store.getState().ponto.find(p => String(p.id) === String(id));
     if (!reg) return;
-    if (!confirm(`Apagar registo de ${reg.nome}?`)) return;
+    const ok = await Dialog.danger({
+      title:        `Apagar registo de ${reg.nome}?`,
+      message:      'Esta ação não pode ser desfeita.',
+      icon:         'fa-trash',
+      confirmLabel: 'Apagar',
+    });
+    if (!ok) return;
     Store.mutate(state => {
       const idx = state.ponto.findIndex(p => String(p.id) === String(id));
       if (idx !== -1) state.ponto.splice(idx, 1);
@@ -108,9 +114,15 @@ const PontoService = (() => {
   /**
    * Limpa todos os registros (apenas admin)
    */
-  function limparTodos() {
+  async function limparTodos() {
     if (!AuthService.isAdmin()) return;
-    if (!confirm('Apagar TODOS os registos de ponto? Esta ação não pode ser desfeita.')) return;
+    const ok = await Dialog.danger({
+      title:        'Apagar todos os registos?',
+      message:      'Esta ação irá remover TODOS os registos de ponto e não pode ser desfeita.',
+      icon:         'fa-exclamation-triangle',
+      confirmLabel: 'Apagar Tudo',
+    });
+    if (!ok) return;
     Store.mutate(state => { state.ponto.splice(0); }, true);
     SyncService.persist();
     UIService.showToast('Ponto', 'Todos os registos apagados', 'warning');
@@ -796,7 +808,7 @@ const DataService = (() => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const parsed = Utils.safeJsonParse(e.target.result, null);
         if (!parsed) throw new Error('Arquivo inválido');
@@ -810,7 +822,13 @@ const DataService = (() => {
           return;
         }
 
-        if (!confirm('Substituir TODOS os dados atuais?\n\nEsta ação não pode ser desfeita.')) {
+        const ok = await Dialog.danger({
+          title:        'Substituir todos os dados?',
+          message:      'Esta ação irá sobrescrever TODOS os dados atuais com os dados do backup. Não pode ser desfeita.',
+          icon:         'fa-file-import',
+          confirmLabel: 'Importar Backup',
+        });
+        if (!ok) {
           input.value = '';
           return;
         }
@@ -832,15 +850,19 @@ const DataService = (() => {
   /**
    * Reset completo do sistema com dupla confirmação
    */
-  function resetSistema() {
+  async function resetSistema() {
     if (!AuthService.isAdmin()) {
       UIService.showToast('Negado', 'Apenas administradores podem resetar o sistema', 'error');
       return;
     }
-    if (!confirm('⚠️ ATENÇÃO: Apagar TODOS os dados?\n\nEssa ação NÃO pode ser desfeita.')) return;
-    const confirmStr = prompt('Digite "DELETAR" para confirmar definitivamente:');
-    if (confirmStr !== 'DELETAR') {
-      UIService.showToast('Cancelado', 'Código incorreto', 'error');
+    const ok = await Dialog.promptDanger({
+      title:        '⚠️ Reset Completo do Sistema',
+      message:      'Esta ação irá apagar TODOS os dados (estoque, vendas, caixa, ponto, delivery). IMPOSSÍVEL desfazer.',
+      keyword:      'DELETAR',
+      confirmLabel: 'Confirmar Reset',
+    });
+    if (!ok) {
+      UIService.showToast('Cancelado', 'Reset abortado', 'warning');
       return;
     }
 
@@ -966,10 +988,16 @@ const EstoqueService = (() => {
     Utils.el('formTitle')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function removerProduto(prodId) {
+  async function removerProduto(prodId) {
     const prod = Store.Selectors.getProdutoById(prodId);
     if (!prod) return;
-    if (!confirm(`Remover "${prod.nome}"?`)) return;
+    const ok = await Dialog.danger({
+      title:        `Remover "${prod.nome}"?`,
+      message:      'O produto será excluído do estoque. Esta ação não pode ser desfeita.',
+      icon:         'fa-box-open',
+      confirmLabel: 'Remover',
+    });
+    if (!ok) return;
     Store.mutate(state => {
       const idx = state.estoque.findIndex(p => String(p.id) === String(prodId));
       if (idx !== -1) state.estoque.splice(idx, 1);
