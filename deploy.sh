@@ -49,6 +49,28 @@ cp index.html index.html.dev.bak
 sed -i 's|<script src="https://cdn.tailwindcss.com"></script>|<link rel="stylesheet" href="/dist/app.css">|g' index.html
 echo "✅ CSS otimizado injetado (backup salvo em index.html.dev.bak)"
 
+# ── 5.5 Gerar CACHE_VERSION automático ───────────────────────────
+# Hash SHA-256 do conteúdo dos arquivos do App Shell.
+# O cache do SW só invalida quando um arquivo realmente muda —
+# sem necessidade de bumpar a versão manualmente a cada deploy.
+echo ""
+echo "▶ Gerando CACHE_VERSION automático..."
+
+# Arquivos que compõem o App Shell (mesma lista do sw.js)
+SHELL_FILES="index.html app-core.js app-dialogs.js app-financeiro.js \
+             app-delivery.js app-ponto.js app-comanda.js app-ia.js \
+             app-notif.js firebase.js sync.js manifest.json sw.js"
+
+# Concatena o conteúdo de todos e tira o SHA-256; pega os primeiros 8 chars
+CONTENT_HASH=$(cat $SHELL_FILES 2>/dev/null | sha256sum | cut -c1-8)
+BUILD_DATE=$(date +%Y%m%d)
+CACHE_VERSION="ch-geladas-${BUILD_DATE}-${CONTENT_HASH}"
+
+# Injeta no sw.js (substitui o placeholder)
+sed -i "s|__CACHE_VERSION__|${CACHE_VERSION}|g" sw.js
+
+echo "✅ CACHE_VERSION = ${CACHE_VERSION}"
+
 # ── 5. Login Firebase (se necessário) ─────────────────────────────
 echo ""
 echo "▶ Verificando autenticação Firebase..."
@@ -62,10 +84,14 @@ echo ""
 echo "▶ Fazendo deploy para Firebase Hosting..."
 firebase deploy --only hosting
 
-# ── 7. Restaura index.html de desenvolvimento ─────────────────────
+# ── 7. Restaura arquivos de desenvolvimento ───────────────────────
 cp index.html.dev.bak index.html
 rm index.html.dev.bak
 echo "✅ index.html de desenvolvimento restaurado"
+
+# Restaura o placeholder do CACHE_VERSION no sw.js
+sed -i "s|${CACHE_VERSION}|__CACHE_VERSION__|g" sw.js
+echo "✅ sw.js restaurado (placeholder __CACHE_VERSION__ de volta)"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"

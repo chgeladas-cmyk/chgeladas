@@ -27,8 +27,12 @@
    CONFIGURAÇÃO
 ═══════════════════════════════════════════════════════════════════ */
 
-/** Incrementar a cada deploy para invalidar cache antigo */
-const CACHE_VERSION = 'ch-geladas-v6.1.0';
+/**
+ * Gerado automaticamente pelo deploy.sh via hash SHA-256 dos arquivos do App Shell.
+ * NÃO edite manualmente — o valor será sobrescrito no próximo deploy.
+ * Formato: ch-geladas-YYYYMMDD-XXXXXXXX  (data + 8 chars do hash de conteúdo)
+ */
+const CACHE_VERSION = '__CACHE_VERSION__';
 
 /** App Shell: arquivos locais que sempre devem estar no cache */
 const APP_SHELL = [
