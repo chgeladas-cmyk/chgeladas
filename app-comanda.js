@@ -706,15 +706,18 @@ function cmdNova() {
 function cmdAbrirDetalhe(id)  { ComandaRenderer.abrirDetalhe(id); }
 function cmdVoltarLista()     { ComandaRenderer.voltarLista(); }
 
-function cmdRenomear() {
+async function cmdRenomear() {
   const id = ComandaRenderer.getAtivaId();
   if (!id) return;
   const c = ComandaService.getById(id);
-  if (!c) return;
-  const novo = prompt('Novo nome:', c.nome);
-  // FIX 11: verificar null antes de .trim() — caso contrário null?.trim() retorna
-  // undefined (truthy no !), tornando o check "novo === null" inalcançável.
-  if (novo === null || !novo.trim()) return;
+  if (!c) { UIService.showToast('Comanda não encontrada', 'Tente novamente', 'warning'); ComandaRenderer.renderComandas(); return; }
+  const novo = await Dialog.prompt({
+    title:        'Renomear Comanda',
+    placeholder:  'Nome da mesa, grupo...',
+    defaultValue: c.nome,
+    icon:         'fa-tag',
+  });
+  if (!novo?.trim()) return;
   ComandaService.renomear(id, novo);
   UIService.showToast('Renomeada', novo.trim());
 }
@@ -747,13 +750,23 @@ function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagame
 /** Aplica desconto digitado no campo */
 function cmdAplicarDesconto() { ComandaFechamento.aplicarDesconto(); }
 
-function cmdCancelarById(id) {
+async function cmdCancelarById(id) {
   const c = ComandaService.getById(id);
-  if (!c) return;
+  if (!c) {
+    // ID desatualizado por sync remoto — força re-render para limpar tela
+    UIService.showToast('Comanda não encontrada', 'A lista foi atualizada', 'warning');
+    ComandaRenderer.renderComandas();
+    return;
+  }
   const msg = c.itens.length > 0
-    ? `Cancelar "${c.nome}"?\n${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
-    : `Cancelar a comanda "${c.nome}"?`;
-  if (!confirm(msg)) return;
+    ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
+    : 'Esta ação não pode ser desfeita.';
+  const ok = await Dialog.danger({
+    title:        `Cancelar "${c.nome}"?`,
+    message:      msg,
+    confirmLabel: 'Sim, cancelar',
+  });
+  if (!ok) return;
   ComandaService.excluir(id);
   UIService.showToast('Comanda cancelada', c.nome, 'warning');
 }
