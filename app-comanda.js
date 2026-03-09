@@ -350,6 +350,7 @@ const ComandaRenderer = (() => {
     const c = ComandaService.getById(id);
     if (!c || c.status !== 'ABERTA') return;
     _cmdAtivaId = id;
+    window._cmdAtualId = id;
     _busca      = '';
     const busca = Utils.el('cmdBusca'); if (busca) busca.value = '';
     Utils.el('cmdVLista')?.classList.add('hidden');
@@ -472,6 +473,7 @@ const ComandaRenderer = (() => {
 
   function _voltarLista(render = true) {
     _cmdAtivaId = null;
+    window._cmdAtualId = null;
     _busca      = '';
     Utils.el('cmdVDetalhe')?.classList.add('hidden');
     Utils.el('cmdVLista')?.classList.remove('hidden');
@@ -517,8 +519,6 @@ const ComandaFechamento = (() => {
     _pendingId  = cmdId;
     _desconto   = 0;
     _pagamentos = [];
-    const inpVal = Utils.el('cmdPgtoValorInput');
-    if (inpVal) inpVal.value = '';
 
     const nome = Utils.el('cmdFechNome');
     if (nome) nome.textContent = c.nome;
@@ -624,11 +624,9 @@ const ComandaFechamento = (() => {
     const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
     const restante    = totalFinal - totalPgtos;
     if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
-    const inp      = Utils.el('cmdPgtoValorInput');
-    const inputVal = parseFloat((inp?.value || '').replace(',', '.')) || 0;
-    const val      = inputVal > 0 ? Math.min(inputVal, restante) : restante;
-    if (inp) inp.value = '';
-    _pagamentos.push({ forma, valor: val });
+    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+    if (val <= 0) return;
+    _pagamentos.push({ forma, valor: Math.min(val, restante) });
     _renderPgtos(totalFinal);
 
     // Se completo, fecha
@@ -744,8 +742,6 @@ function cmdAbrirFechamento() {
 
 /** Confirmação simples (modo de pagamento único) */
 function cmdConfirmarPgto(forma) { ComandaFechamento.confirmar(forma); }
-/** Adiciona pagamento parcial (modo múltiplas formas) */
-function cmdAdicionarPgto(forma)  { ComandaFechamento.adicionarPagamentoParcial(forma); }
 
 /** Adiciona pagamento parcial (modo múltiplas formas) */
 function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagamentoParcial(forma); }
