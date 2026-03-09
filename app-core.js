@@ -1836,12 +1836,22 @@ function addCart(prodId, packIdx, btnEl) { CartService.addItem(prodId, packIdx, 
 
 function removerCart(i)          { CartService.removeItem(i); }
 
-function limparCarrinho() {
+async function limparCarrinho() {
   if (CartService.isEmpty()) return;
-  if (confirm(`Limpar ${CartService.getCount()} ${CartService.getCount() === 1 ? 'item' : 'itens'}?`)) {
-    CartService.clear();
-    UIService.showToast('Carrinho', 'Limpo', 'warning');
-  }
+  const count = CartService.getCount();
+  const ok = await Dialog.confirm({
+    title:        'Limpar carrinho',
+    message:      `Remover ${count} ${count === 1 ? 'item' : 'itens'} do carrinho?`,
+    icon:         'fa-trash',
+    iconBg:       'bg-red-500/15',
+    iconColor:    'text-red-400',
+    confirmLabel: 'Limpar',
+    confirmCls:   'bg-red-600 hover:bg-red-500 text-white',
+    danger:       true,
+  });
+  if (!ok) return;
+  CartService.clear();
+  UIService.showToast('Carrinho', 'Limpo', 'warning');
 }
 
 function abrirDrawer() {
