@@ -358,7 +358,8 @@ const NotifService = (() => {
     EventBus.on('estoque:updated', () => _onEstoqueUpdate());
 
     // Exclusão de venda (disparado pelo módulo de financeiro)
-    EventBus.on('venda:excluida', venda => _onExclusaoVenda(venda));
+    // FIX: evento corrigido de 'venda:excluida' (nunca emitido) para 'finance:venda-deleted'
+    EventBus.on('finance:venda-deleted', venda => _onExclusaoVenda(venda));
 
     console.info('[NotifService] ✅ Notificações + Auditoria ativas');
   }

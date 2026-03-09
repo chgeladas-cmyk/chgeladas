@@ -388,7 +388,7 @@ const FinanceService = (() => {
     }, true);
     SyncService.persist();
     UIService.showToast('Venda excluída', '', 'warning');
-    EventBus.emit('finance:venda-deleted');
+    EventBus.emit('finance:venda-deleted', v); // FIX: passa objeto da venda para NotifService registrar auditoria e Telegram
   }
 
   function salvarInvestimento() {
