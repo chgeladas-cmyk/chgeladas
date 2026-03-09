@@ -277,6 +277,7 @@ const Store = (() => {
     caixa:      [],
     comandas:   [],
     movimentacoes: [],   // entradas e saídas manuais
+    auditLog:   [],      // log imutável de auditoria (append-only)
     investimento: 0,
     config:     { whatsapp: '' },
     delivery:   {
@@ -353,6 +354,7 @@ const Store = (() => {
     if (!Array.isArray(d.vendas))     d.vendas     = [];
     if (!Array.isArray(d.ponto))      d.ponto      = [];
     if (!Array.isArray(d.inventario)) d.inventario = [];
+    if (!Array.isArray(d.auditLog))       d.auditLog       = [];
     if (!Array.isArray(d.movimentacoes)) d.movimentacoes = [];
     if (!Array.isArray(d.caixa))      d.caixa      = [];
     if (!Array.isArray(d.comandas))   d.comandas   = [];
@@ -1499,20 +1501,39 @@ const VendaService = (() => {
 
   /**
    * Adiciona pagamento parcial ao total (suporte a múltiplas formas)
+   * FIX: substituído prompt() nativo (bloqueado no Android Chrome) por Dialog.prompt()
    * @param {string} forma
    */
-  function adicionarPagamentoParcial(forma) {
+  async function adicionarPagamentoParcial(forma) {
     const restante = CartService.getTotal() - CartService.getTotalPagamentos();
     if (restante <= 0.009) {
       UIService.showToast('Atenção', 'Total já foi coberto pelos pagamentos', 'warning');
       return;
     }
-    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+
+    // Ícone por forma de pagamento
+    const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
+    const icone  = icones[forma] || 'fa-hand-holding-usd';
+
+    const str = await Dialog.prompt({
+      title:        `Valor — ${forma}`,
+      message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
+      placeholder:  restante.toFixed(2),
+      defaultValue: restante.toFixed(2),
+      confirmLabel: 'Adicionar',
+      icon:         icone,
+      iconBg:       'bg-emerald-500/15',
+      iconColor:    'text-emerald-400',
+    });
+
+    if (!str) return;
+    const val = parseFloat(String(str).replace(',', '.')) || 0;
     if (val <= 0) return;
+
     CartService.addPagamento(forma, Math.min(val, restante));
     _renderMultiPgto();
 
-    // Se todo o total foi coberto, finaliza
+    // Se todo o total foi coberto, finaliza automaticamente
     if (CartService.getTotalPagamentos() >= CartService.getTotal() - 0.009) {
       UIService.closeModal('modalPagamento');
       finalizarVenda();

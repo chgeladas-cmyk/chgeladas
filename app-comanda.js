@@ -613,7 +613,8 @@ const ComandaFechamento = (() => {
     }
   }
 
-  function adicionarPagamentoParcial(forma) {
+  // FIX: prompt() nativo bloqueado no Android → Dialog.prompt()
+  async function adicionarPagamentoParcial(forma) {
     const cmdId = _pendingId;
     if (!cmdId) return;
     const c   = ComandaService.getById(cmdId);
@@ -622,12 +623,26 @@ const ComandaFechamento = (() => {
     const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
     const restante    = totalFinal - totalPgtos;
     if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
-    const val = parseFloat(prompt(`Valor para "${forma}" (restante: ${Utils.formatCurrency(restante)}):`, restante.toFixed(2))) || 0;
+
+    const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
+    const str = await Dialog.prompt({
+      title:        `Valor — ${forma}`,
+      message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
+      placeholder:  restante.toFixed(2),
+      defaultValue: restante.toFixed(2),
+      confirmLabel: 'Adicionar',
+      icon:         icones[forma] || 'fa-hand-holding-usd',
+      iconBg:       'bg-emerald-500/15',
+      iconColor:    'text-emerald-400',
+    });
+    if (!str) return;
+    const val = parseFloat(String(str).replace(',', '.')) || 0;
     if (val <= 0) return;
+
     _pagamentos.push({ forma, valor: Math.min(val, restante) });
     _renderPgtos(totalFinal);
 
-    // Se completo, fecha
+    // Se completo, fecha automaticamente
     const novoPgtoTotal = _pagamentos.reduce((a, p) => a + p.valor, 0);
     if (novoPgtoTotal >= totalFinal - 0.009) {
       const formaFinal = _pagamentos.length > 1
@@ -695,9 +710,16 @@ EventBus.on('sync:remote-applied',  () => ComandaRenderer.renderComandas());
 
 function renderComandas() { ComandaRenderer.renderComandas(); }
 
-function cmdNova() {
-  const nome = prompt('Nome da comanda (Mesa, grupo, cliente...):', '');
-  if (nome === null) return;
+async function cmdNova() {
+  const nome = await Dialog.prompt({
+    title:        'Nova Comanda',
+    placeholder:  'Mesa 1, Grupo VIP, João...',
+    confirmLabel: 'Criar',
+    icon:         'fa-receipt',
+    iconBg:       'bg-purple-500/15',
+    iconColor:    'text-purple-400',
+  });
+  if (!nome) return;
   const c = ComandaService.nova(nome);
   UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
   ComandaRenderer.abrirDetalhe(c.id);
