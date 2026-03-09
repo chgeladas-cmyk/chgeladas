@@ -1563,12 +1563,19 @@ document.addEventListener('DOMContentLoaded', () => {
         <span class="text-[10px] font-black uppercase text-slate-500">Total</span>
         <span id="cmdFechTotal" class="text-lg font-black text-white">R$ 0,00</span>
       </div>
+      <p id="cmdFechSubtotal" class="text-[9px] text-amber-400 font-bold hidden"></p>
       <p class="text-[10px] text-slate-500 font-bold uppercase text-center pt-1">Forma de pagamento</p>
+      <!-- Input de valor parcial -->
+      <div class="flex items-center gap-2">
+        <input id="cmdPgtoValorInput" type="number" min="0" step="0.01" placeholder="Valor parcial (vazio = total restante)"
+          class="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-black focus:border-amber-500 outline-none"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();}" />
+      </div>
       <div class="grid grid-cols-2 gap-2">
-        <button onclick="cmdConfirmarPgto('Dinheiro')"   class="py-3 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-black text-xs uppercase hover:bg-emerald-600/40 transition-all active:scale-95"><i class="fas fa-money-bill mr-1"></i>Dinheiro</button>
-        <button onclick="cmdConfirmarPgto('Pix')"        class="py-3 rounded-xl bg-blue-600/20 text-blue-300 border border-blue-500/30 font-black text-xs uppercase hover:bg-blue-600/40 transition-all active:scale-95"><i class="fas fa-qrcode mr-1"></i>Pix</button>
-        <button onclick="cmdConfirmarPgto('Débito')"     class="py-3 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 font-black text-xs uppercase hover:bg-purple-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Débito</button>
-        <button onclick="cmdConfirmarPgto('Crédito')"    class="py-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 font-black text-xs uppercase hover:bg-amber-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Crédito</button>
+        <button onclick="cmdAdicionarPgto('Dinheiro')"   class="py-3 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-black text-xs uppercase hover:bg-emerald-600/40 transition-all active:scale-95"><i class="fas fa-money-bill mr-1"></i>Dinheiro</button>
+        <button onclick="cmdAdicionarPgto('Pix')"        class="py-3 rounded-xl bg-blue-600/20 text-blue-300 border border-blue-500/30 font-black text-xs uppercase hover:bg-blue-600/40 transition-all active:scale-95"><i class="fas fa-qrcode mr-1"></i>Pix</button>
+        <button onclick="cmdAdicionarPgto('Débito')"     class="py-3 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 font-black text-xs uppercase hover:bg-purple-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Débito</button>
+        <button onclick="cmdAdicionarPgto('Crédito')"    class="py-3 rounded-xl bg-amber-600/20 text-amber-300 border border-amber-500/30 font-black text-xs uppercase hover:bg-amber-600/40 transition-all active:scale-95"><i class="fas fa-credit-card mr-1"></i>Crédito</button>
       </div>
     </div>
   </div>
@@ -1863,20 +1870,9 @@ document.addEventListener('DOMContentLoaded', () => {
     _guard('Excluir Comanda', _executarExclusaoComanda);
   };
 
-  async function _executarExclusaoComanda() {
-    // FIX: _cmdAtualId/cmdAtualId nunca eram atribuídos — o ID ativo vive
-    // dentro do closure de ComandaRenderer. Usar getAtivaId() como fonte única.
-    const cmdId = (typeof ComandaRenderer !== 'undefined' && ComandaRenderer.getAtivaId?.())
-      || window._cmdAtualId
-      || window.cmdAtualId;
+  function _executarExclusaoComanda() {
+    const cmdId = window._cmdAtualId || window.cmdAtualId;
     if (!cmdId) { UIService.showToast('Erro', 'Comanda não identificada', 'error'); return; }
-    const c = (typeof ComandaService !== 'undefined') ? ComandaService.getById(cmdId) : null;
-    const nome = c?.nome || 'esta comanda';
-    const msg  = c?.itens?.length > 0
-      ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
-      : 'Esta ação não pode ser desfeita.';
-    const ok = await Dialog.danger({ title: `Excluir "${nome}"?`, message: msg, confirmLabel: 'Sim, excluir' });
-    if (!ok) return;
     Store.mutate(state => {
       const idx = (state.comandas || []).findIndex(c => String(c.id) === String(cmdId));
       if (idx !== -1) state.comandas.splice(idx, 1);
@@ -1884,7 +1880,7 @@ document.addEventListener('DOMContentLoaded', () => {
     SyncService.persistNow();
     if (typeof cmdVoltarLista === 'function') cmdVoltarLista();
     if (typeof renderComandas === 'function') renderComandas();
-    UIService.showToast('Comanda excluída', nome, 'warning');
+    UIService.showToast('Comanda excluída', '', 'warning');
   }
 
   /* ════════════════════════════════════════════════════════

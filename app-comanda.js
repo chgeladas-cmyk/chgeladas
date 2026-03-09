@@ -517,6 +517,8 @@ const ComandaFechamento = (() => {
     _pendingId  = cmdId;
     _desconto   = 0;
     _pagamentos = [];
+    const inpVal = Utils.el('cmdPgtoValorInput');
+    if (inpVal) inpVal.value = '';
 
     const nome = Utils.el('cmdFechNome');
     if (nome) nome.textContent = c.nome;
@@ -613,8 +615,7 @@ const ComandaFechamento = (() => {
     }
   }
 
-  // FIX: prompt() nativo bloqueado no Android → Dialog.prompt()
-  async function adicionarPagamentoParcial(forma) {
+  function adicionarPagamentoParcial(forma) {
     const cmdId = _pendingId;
     if (!cmdId) return;
     const c   = ComandaService.getById(cmdId);
@@ -623,26 +624,14 @@ const ComandaFechamento = (() => {
     const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
     const restante    = totalFinal - totalPgtos;
     if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
-
-    const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
-    const str = await Dialog.prompt({
-      title:        `Valor — ${forma}`,
-      message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
-      placeholder:  restante.toFixed(2),
-      defaultValue: restante.toFixed(2),
-      confirmLabel: 'Adicionar',
-      icon:         icones[forma] || 'fa-hand-holding-usd',
-      iconBg:       'bg-emerald-500/15',
-      iconColor:    'text-emerald-400',
-    });
-    if (!str) return;
-    const val = parseFloat(String(str).replace(',', '.')) || 0;
-    if (val <= 0) return;
-
-    _pagamentos.push({ forma, valor: Math.min(val, restante) });
+    const inp      = Utils.el('cmdPgtoValorInput');
+    const inputVal = parseFloat((inp?.value || '').replace(',', '.')) || 0;
+    const val      = inputVal > 0 ? Math.min(inputVal, restante) : restante;
+    if (inp) inp.value = '';
+    _pagamentos.push({ forma, valor: val });
     _renderPgtos(totalFinal);
 
-    // Se completo, fecha automaticamente
+    // Se completo, fecha
     const novoPgtoTotal = _pagamentos.reduce((a, p) => a + p.valor, 0);
     if (novoPgtoTotal >= totalFinal - 0.009) {
       const formaFinal = _pagamentos.length > 1
@@ -710,16 +699,9 @@ EventBus.on('sync:remote-applied',  () => ComandaRenderer.renderComandas());
 
 function renderComandas() { ComandaRenderer.renderComandas(); }
 
-async function cmdNova() {
-  const nome = await Dialog.prompt({
-    title:        'Nova Comanda',
-    placeholder:  'Mesa 1, Grupo VIP, João...',
-    confirmLabel: 'Criar',
-    icon:         'fa-receipt',
-    iconBg:       'bg-purple-500/15',
-    iconColor:    'text-purple-400',
-  });
-  if (!nome) return;
+function cmdNova() {
+  const nome = prompt('Nome da comanda (Mesa, grupo, cliente...):', '');
+  if (nome === null) return;
   const c = ComandaService.nova(nome);
   UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
   ComandaRenderer.abrirDetalhe(c.id);
@@ -728,18 +710,15 @@ async function cmdNova() {
 function cmdAbrirDetalhe(id)  { ComandaRenderer.abrirDetalhe(id); }
 function cmdVoltarLista()     { ComandaRenderer.voltarLista(); }
 
-async function cmdRenomear() {
+function cmdRenomear() {
   const id = ComandaRenderer.getAtivaId();
   if (!id) return;
   const c = ComandaService.getById(id);
-  if (!c) { UIService.showToast('Comanda não encontrada', 'Tente novamente', 'warning'); ComandaRenderer.renderComandas(); return; }
-  const novo = await Dialog.prompt({
-    title:        'Renomear Comanda',
-    placeholder:  'Nome da mesa, grupo...',
-    defaultValue: c.nome,
-    icon:         'fa-tag',
-  });
-  if (!novo?.trim()) return;
+  if (!c) return;
+  const novo = prompt('Novo nome:', c.nome);
+  // FIX 11: verificar null antes de .trim() — caso contrário null?.trim() retorna
+  // undefined (truthy no !), tornando o check "novo === null" inalcançável.
+  if (novo === null || !novo.trim()) return;
   ComandaService.renomear(id, novo);
   UIService.showToast('Renomeada', novo.trim());
 }
@@ -765,6 +744,8 @@ function cmdAbrirFechamento() {
 
 /** Confirmação simples (modo de pagamento único) */
 function cmdConfirmarPgto(forma) { ComandaFechamento.confirmar(forma); }
+/** Adiciona pagamento parcial (modo múltiplas formas) */
+function cmdAdicionarPgto(forma)  { ComandaFechamento.adicionarPagamentoParcial(forma); }
 
 /** Adiciona pagamento parcial (modo múltiplas formas) */
 function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagamentoParcial(forma); }
@@ -772,23 +753,13 @@ function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagame
 /** Aplica desconto digitado no campo */
 function cmdAplicarDesconto() { ComandaFechamento.aplicarDesconto(); }
 
-async function cmdCancelarById(id) {
+function cmdCancelarById(id) {
   const c = ComandaService.getById(id);
-  if (!c) {
-    // ID desatualizado por sync remoto — força re-render para limpar tela
-    UIService.showToast('Comanda não encontrada', 'A lista foi atualizada', 'warning');
-    ComandaRenderer.renderComandas();
-    return;
-  }
+  if (!c) return;
   const msg = c.itens.length > 0
-    ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
-    : 'Esta ação não pode ser desfeita.';
-  const ok = await Dialog.danger({
-    title:        `Cancelar "${c.nome}"?`,
-    message:      msg,
-    confirmLabel: 'Sim, cancelar',
-  });
-  if (!ok) return;
+    ? `Cancelar "${c.nome}"?\n${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)}\n\nEsta ação não pode ser desfeita.`
+    : `Cancelar a comanda "${c.nome}"?`;
+  if (!confirm(msg)) return;
   ComandaService.excluir(id);
   UIService.showToast('Comanda cancelada', c.nome, 'warning');
 }
