@@ -204,13 +204,28 @@ const NotifService = (() => {
   function _fmtVenda(venda, origem) {
     const icone = origem === 'Comanda' ? '📋' : origem === 'Delivery' ? '🛵' : '🛒';
     let msg = `${icone} <b>Nova Venda — ${_esc(origem)}</b>\n`;
-    msg    += `💰 Total: <b>${_esc(Utils.formatCurrency(venda.total))}</b>\n`;
-    if ((venda.desconto || 0) > 0) {
-      msg  += `🏷️ Desconto: ${_esc(Utils.formatCurrency(venda.desconto))}\n`;
+    if (venda.nomeComanda) msg += `📋 Comanda: <b>${_esc(venda.nomeComanda)}</b>\n`;
+    if (venda.num)         msg += `#️⃣ Pedido: <b>#${_esc(String(venda.num))}</b>\n`;
+
+    // Itens vendidos
+    const itens = venda.itens || [];
+    if (itens.length > 0) {
+      msg += `\n<b>Itens:</b>\n`;
+      itens.forEach(i => {
+        const qtdLabel = i.label && i.label !== 'UNID' ? i.label : '1x';
+        msg += `  · ${_esc(qtdLabel)} ${_esc(i.nome || '?')} — ${_esc(Utils.formatCurrency(i.preco))}\n`;
+      });
+      msg += `\n`;
     }
-    msg    += `💳 Pgto: ${_esc(venda.formaPgto || '—')}\n`;
-    msg    += `🕐 ${Utils.timestamp()}\n`;
-    msg    += `🔖 ID: <code>${_esc(String(venda.id))}</code>`;
+
+    if ((venda.subtotal || 0) > 0 && (venda.desconto || 0) > 0) {
+      msg += `🏷️ Subtotal: ${_esc(Utils.formatCurrency(venda.subtotal))}\n`;
+      msg += `➖ Desconto: ${_esc(Utils.formatCurrency(venda.desconto))}\n`;
+    }
+    msg += `💰 Total: <b>${_esc(Utils.formatCurrency(venda.total))}</b>\n`;
+    msg += `💳 Pgto: ${_esc(venda.formaPgto || '—')}\n`;
+    msg += `🕐 ${Utils.timestamp()}\n`;
+    msg += `🔖 ID: <code>${_esc(String(venda.id))}</code>`;
     return msg;
   }
 
@@ -344,7 +359,8 @@ const NotifService = (() => {
     EventBus.on('venda:concluida',        venda  => _onVenda(venda));
     EventBus.on('comanda:finalizada',     venda  => _onVenda({ ...venda, origem: 'Comanda' }));
     EventBus.on('delivery:status-changed', pedido => {
-      if (pedido?.status === 'entregue') _onVenda({ ...pedido, origem: 'Delivery' });
+      // FIX: status é uppercase 'ENTREGUE', não lowercase 'entregue'
+      if (pedido?.status === 'ENTREGUE') _onVenda({ ...pedido, origem: 'Delivery' });
     });
 
     // Caixa

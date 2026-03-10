@@ -2413,8 +2413,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <p id="relDataHoje" class="text-[9px] text-slate-500 font-bold mt-0.5"></p>
       </div>
       <div class="flex items-center gap-2">
-        <button onclick="relEnviarWhatsApp()" class="w-8 h-8 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 flex items-center justify-center transition-all" title="Enviar pelo WhatsApp">
-          <i class="fab fa-whatsapp text-sm"></i>
+        <button onclick="relCopiar()" class="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 flex items-center justify-center transition-all" title="Copiar relatório">
+          <i class="fas fa-copy text-sm"></i>
+        </button>
+        <button onclick="relBaixarTxt()" class="w-8 h-8 rounded-lg bg-violet-600/20 text-violet-400 hover:bg-violet-600/30 flex items-center justify-center transition-all" title="Baixar TXT completo">
+          <i class="fas fa-file-alt text-sm"></i>
         </button>
         <button onclick="UIService.closeModal('modalRelatorio')" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center">
           <i class="fas fa-times text-xs"></i>
@@ -2557,10 +2560,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <!-- Footer -->
     <div class="p-4 border-t border-white/5">
-      <button onclick="relEnviarWhatsApp()"
-        class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2">
-        <i class="fab fa-whatsapp"></i> Enviar relatório ao ADM
-      </button>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="relCopiar()"
+          class="py-3 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2 border border-blue-500/20">
+          <i class="fas fa-copy"></i> Copiar
+        </button>
+        <button onclick="relBaixarTxt()"
+          class="py-3 rounded-xl bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 font-black uppercase text-xs tracking-wide transition-all flex items-center justify-center gap-2 border border-violet-500/20">
+          <i class="fas fa-file-alt"></i> Baixar TXT
+        </button>
+      </div>
     </div>
 
   </div>
@@ -2681,10 +2690,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('relSecStock')?.classList.toggle('hidden', !isAdm);
     document.getElementById('relSecLucro')?.classList.toggle('hidden', !isAdm);
 
-    // Botão: colob vê "Enviar ao ADM", ADM vê "Partilhar"
-    const btnEl = document.querySelector('#modalRelatorio .fab\\:whatsapp')?.closest('button');
-    const footEl = document.querySelector('#modalRelatorio footer button, #modalRelatorio .p-4 button');
-    if (footEl) footEl.textContent = isAdm ? '📤 Partilhar relatório' : '📲 Enviar ao ADM';
+    // Botão do footer não precisa de atualização dinâmica — os dois são fixos (Copiar / Baixar TXT)
 
     if (isAdm) {
       // Stock
@@ -2720,56 +2726,160 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  /* ── Enviar via WhatsApp ─────────────────────────────── */
-  window.relEnviarWhatsApp = function () {
+  /* ── Gera o texto completo do relatório ────────────────── */
+  function _gerarRelatorio(completo = false) {
     const config  = Store.Selectors.getConfig() || {};
     const isAdm   = AuthService.isAdmin();
-    const zapNum  = isAdm
-      ? (config.whatsappColaborador || config.whatsapp || '').replace(/\D/g,'')
-      : (config.whatsapp || '').replace(/\D/g,'');
-
     const nome    = config.nome || 'CH Geladas PDV';
-    const hoje    = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric'});
-    const hora    = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    const hoje    = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const hora    = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const isoHoje = Utils.todayISO ? Utils.todayISO() : new Date().toISOString().slice(0, 10);
+    const SEP     = '═'.repeat(48);
+    const sep     = '─'.repeat(48);
 
-    // Coleta dados já calculados dos elementos
     const g = id => document.getElementById(id)?.textContent?.trim() || '-';
 
-    let msg = '📊 *' + nome + ' — Relatório Diário*\n';
-    msg += '📅 ' + hoje + ' · ' + hora + '\n\n';
+    let txt = `${SEP}\n`;
+    txt    += `  ${nome.toUpperCase()} — RELATÓRIO DO DIA\n`;
+    txt    += `  ${hoje.toUpperCase()}\n`;
+    txt    += `  Gerado às ${hora}\n`;
+    txt    += `${SEP}\n\n`;
 
-    msg += '⏱ *Turno*\n';
-    msg += 'Entrada: ' + g('relEntrada') + '  |  Saída: ' + g('relSaida') + '  |  Duração: ' + g('relDuracao') + '\n\n';
+    // ── Turno ──────────────────────────────────────────────
+    txt += `TURNO\n${sep}\n`;
+    txt += `  Entrada:  ${g('relEntrada')}\n`;
+    txt += `  Saída:    ${g('relSaida')}\n`;
+    txt += `  Duração:  ${g('relDuracao')}\n\n`;
 
-    msg += '💰 *Caixa*\n';
-    msg += 'Fundo inicial: ' + g('relFundo') + '\n';
-    msg += 'Vendas dinheiro: ' + g('relVendasDinheiro') + '\n';
-    msg += 'Pix/Cartão: ' + g('relVendasDigital') + '\n';
-    msg += '▶ Total vendido: *' + g('relTotalVendido') + '*\n';
-    msg += '▶ Esperado em caixa: *' + g('relEsperado') + '*\n\n';
+    // ── Caixa ──────────────────────────────────────────────
+    txt += `CAIXA\n${sep}\n`;
+    txt += `  Fundo inicial:       ${g('relFundo')}\n`;
+    txt += `  Vendas dinheiro:     ${g('relVendasDinheiro')}\n`;
+    txt += `  Vendas Pix/Cartão:   ${g('relVendasDigital')}\n`;
+    txt += `  Total vendido:       ${g('relTotalVendido')}\n`;
+    txt += `  Esperado em caixa:   ${g('relEsperado')}\n\n`;
 
-    msg += '🛒 *Vendas*\n';
-    msg += g('relQtdVendas') + ' vendas · ' + g('relQtdItens') + ' itens · Ticket médio: ' + g('relTicket') + '\n\n';
+    // ── Vendas resumo ──────────────────────────────────────
+    txt += `VENDAS — RESUMO\n${sep}\n`;
+    txt += `  Nº de vendas:  ${g('relQtdVendas')}\n`;
+    txt += `  Itens vendidos: ${g('relQtdItens')}\n`;
+    txt += `  Ticket médio:  ${g('relTicket')}\n\n`;
 
-    msg += '🛵 *Delivery*\n';
-    msg += 'Pedidos: ' + g('relPedidos') + '  |  Entregues: ' + g('relEntregues') + '  |  Pendentes: ' + g('relPendentes') + '\n\n';
+    // Top 3 produtos
+    const topEl = document.getElementById('relTopProdutos');
+    const topItems = topEl ? [...topEl.querySelectorAll('div')] : [];
+    if (topItems.length > 0) {
+      txt += `TOP PRODUTOS\n${sep}\n`;
+      topItems.forEach((el, i) => {
+        const spans = el.querySelectorAll('span');
+        if (spans.length >= 2) txt += `  ${i + 1}. ${spans[0].textContent.trim()}  —  ${spans[1].textContent.trim()}\n`;
+      });
+      txt += `\n`;
+    }
 
-    if (isAdm) {
-      msg += '📈 *Resultado*\n';
-      msg += 'Lucro hoje: ' + g('relLucro') + '  |  Margem: ' + g('relMargem') + '\n';
-      msg += 'Investimento: ' + g('relInvestimento') + '  |  ROI: ' + g('relRoi') + '\n\n';
+    // ── Vendas detalhadas (TXT completo) ───────────────────
+    if (completo) {
+      const vendas = (Store.Selectors.getVendas() || []).filter(v => {
+        const d = v.dataCurta || '';
+        return d === isoHoje || (v.data || '').startsWith(new Date().toLocaleDateString('pt-BR').slice(0, 8));
+      });
 
-      const esg = g('relEsgotados'), baixo = g('relStockBaixo');
-      if (esg !== '0' || baixo !== '0') {
-        msg += '⚠️ *Stock*\n';
-        msg += 'Esgotados: ' + esg + '  |  Stock baixo: ' + baixo + '\n\n';
+      if (vendas.length > 0) {
+        txt += `VENDAS INDIVIDUAIS (${vendas.length})\n${sep}\n`;
+        [...vendas].reverse().forEach((v, idx) => {
+          txt += `\n  #${idx + 1} [${v.origem || 'PDV'}]`;
+          if (v.nomeComanda) txt += `  Comanda: ${v.nomeComanda}`;
+          if (v.num)         txt += `  Pedido #${v.num}`;
+          txt += `\n  ${v.data || ''}  ${v.hora || ''}  ID: ${String(v.id).slice(-8)}\n`;
+
+          (v.itens || []).forEach(i => {
+            const label = i.label && i.label !== 'UNID' ? i.label : '1x';
+            txt += `    · ${(label + ' ' + (i.nome || '')).padEnd(30)} ${fc(i.preco).padStart(10)}\n`;
+          });
+
+          if ((v.desconto || 0) > 0) {
+            txt += `    ${'─'.repeat(40)}\n`;
+            txt += `    ${'Subtotal'.padEnd(30)} ${fc(v.subtotal || 0).padStart(10)}\n`;
+            txt += `    ${'Desconto'.padEnd(30)} ${('-' + fc(v.desconto)).padStart(10)}\n`;
+          }
+          txt += `    ${'═'.repeat(40)}\n`;
+          txt += `    ${'TOTAL'.padEnd(30)} ${fc(v.total || 0).padStart(10)}\n`;
+          if ((v.lucro || 0) > 0)
+            txt += `    ${'Lucro'.padEnd(30)} ${fc(v.lucro).padStart(10)}\n`;
+          txt += `    Pgto: ${v.formaPgto || '—'}\n`;
+        });
+        txt += `\n`;
       }
     }
 
-    msg += '_Enviado pelo CH Geladas PDV_';
+    // ── Delivery ───────────────────────────────────────────
+    txt += `DELIVERY\n${sep}\n`;
+    txt += `  Pedidos:   ${g('relPedidos')}\n`;
+    txt += `  Entregues: ${g('relEntregues')}\n`;
+    txt += `  Pendentes: ${g('relPendentes')}\n\n`;
 
-    if (zapNum) Utils.openWhatsApp(zapNum, msg);
-    else UIService.showToast('Sem número configurado', 'Configure o WhatsApp em ⚙️ Configurações', 'warning');
+    // ── Seções ADM ─────────────────────────────────────────
+    if (isAdm) {
+      txt += `RESULTADO (ADM)\n${sep}\n`;
+      txt += `  Lucro bruto hoje:   ${g('relLucro')}\n`;
+      txt += `  Margem:             ${g('relMargem')}\n`;
+      txt += `  Investimento total: ${g('relInvestimento')}\n`;
+      txt += `  Retorno acumulado:  ${g('relRetornoAcum')}\n`;
+      txt += `  ROI total:          ${g('relRoi')}\n\n`;
+
+      const esg   = g('relEsgotados');
+      const baixo = g('relStockBaixo');
+      if (esg !== '0' || baixo !== '0') {
+        txt += `STOCK — ALERTAS\n${sep}\n`;
+        txt += `  Esgotados:   ${esg}\n`;
+        txt += `  Stock baixo: ${baixo}\n`;
+        const alertsEl = document.getElementById('relAlertasStock');
+        if (alertsEl) {
+          [...alertsEl.querySelectorAll('span:first-child')].forEach(el => {
+            txt += `  · ${el.textContent.trim()}\n`;
+          });
+        }
+        txt += `\n`;
+      }
+    }
+
+    txt += `${SEP}\n  Gerado pelo ${nome} PDV\n${SEP}\n`;
+    return txt;
+  }
+
+  /* ── Copiar para área de transferência ───────────────── */
+  window.relCopiar = function () {
+    const txt = _gerarRelatorio(false); // resumo para copiar
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(txt)
+        .then(() => UIService.showToast('Copiado!', 'Relatório copiado para a área de transferência', 'success'))
+        .catch(() => _copiarFallback(txt));
+    } else {
+      _copiarFallback(txt);
+    }
+  };
+
+  function _copiarFallback(txt) {
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      UIService.showToast('Copiado!', 'Relatório copiado', 'success');
+    } catch (_) {
+      UIService.showToast('Erro', 'Não foi possível copiar', 'error');
+    }
+    document.body.removeChild(ta);
+  }
+
+  /* ── Baixar TXT completo ─────────────────────────────── */
+  window.relBaixarTxt = function () {
+    const txt      = _gerarRelatorio(true); // completo com itens de cada venda
+    const fileName = `Relatorio_${Utils.todayISO ? Utils.todayISO() : new Date().toISOString().slice(0,10)}.txt`;
+    Utils.downloadBlob(txt, 'text/plain;charset=utf-8;', fileName);
+    UIService.showToast('TXT gerado', `${fileName}`, 'success');
   };
 
   function _set(id, val) {
