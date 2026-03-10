@@ -1262,6 +1262,15 @@ EventBus.on('delivery:entregador-added',    () => { DeliveryRenderer.renderEntLi
 EventBus.on('delivery:entregador-removed',  () => { DeliveryRenderer.renderEntLista();  DeliveryRenderer.populateMpEntregadores(); });
 EventBus.on('delivery:entregador-toggled',  () => { DeliveryRenderer.renderEntLista();  DeliveryRenderer.populateMpEntregadores(); });
 
+// Sync remoto (outro dispositivo gravou) — re-renderiza Delivery se a aba
+// estiver ativa. Sem este listener, mudanças de status de pedidos feitas em
+// outro device só apareciam após F5.
+EventBus.on('sync:remote-applied', () => {
+  if (Utils.el('tab-delivery')?.classList.contains('active')) {
+    DeliveryRenderer.renderDelivery();
+  }
+});
+
 /* ═══════════════════════════════════════════════════════════════════
    WINDOW BRIDGES — Compatibilidade com HTML inline
 ═══════════════════════════════════════════════════════════════════ */

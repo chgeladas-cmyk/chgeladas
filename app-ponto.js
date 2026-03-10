@@ -1167,6 +1167,19 @@ EventBus.on('estoque:updated',  () => {
   RenderService.updateStats();
 });
 
+// Sync remoto (outro dispositivo gravou) — re-renderiza módulos que não têm
+// listener próprio para sync:remote-applied: Ponto, Caixa, Estoque, Inventário.
+// Cada render só executa se a aba correspondente estiver ativa, evitando trabalho
+// desnecessário enquanto o usuário está em outra seção.
+EventBus.on('sync:remote-applied', () => {
+  const _ativo = id => !!Utils.el(`tab-${id}`)?.classList.contains('active');
+
+  if (_ativo('ponto'))     PontoRenderer.renderPonto();
+  if (_ativo('estoque'))   EstoqueService.renderEstoque();
+  if (_ativo('inventario')) InventoryRenderer.renderInventario();
+  if (_ativo('dados'))     DataService.renderDados();
+});
+
 /* ═══════════════════════════════════════════════════════════════════
    WINDOW BRIDGES — Compatibilidade com HTML inline
 ═══════════════════════════════════════════════════════════════════ */
