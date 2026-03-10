@@ -1419,6 +1419,25 @@ const VendaService = (() => {
     // Limpa pagamentos anteriores
     CartService.clearPagamentos();
 
+    // BUG-02 FIX: zera desconto interno e o campo de input ao re-abrir o modal.
+    // clearPagamentos() não toca em _desconto — sem este reset, um desconto
+    // aplicado em uma abertura anterior fica ativo na próxima.
+    CartService.setDesconto(0);
+    const _descInp  = Utils.el('_pdvDescontoInput');
+    const _descInfo = Utils.el('_pdvDescontoInfo');
+    if (_descInp)  _descInp.value = '';
+    if (_descInfo) _descInfo.classList.add('hidden');
+
+    // BUG-03 FIX: oculta e limpa o painel de multi-pagamento ao re-abrir.
+    // O wrap é injetado uma única vez — sem este reset, a lista de uma
+    // divisão anterior continua visível na abertura seguinte.
+    const _multiWrap = Utils.el('_pdvMultiPgtoWrap');
+    const _pgtoLista = Utils.el('_pdvPgtosLista');
+    const _pgtoRest  = Utils.el('_pdvPgtoRestante');
+    if (_multiWrap) _multiWrap.classList.add('hidden');
+    if (_pgtoLista) _pgtoLista.innerHTML = '';
+    if (_pgtoRest)  _pgtoRest.textContent = 'Restante: —';
+
     const subtotalEl = Utils.el('vendaSubtotal');
     const resumoEl   = Utils.el('vendaResumo');
     const descontoEl = Utils.el('vendaDescontoWrap');

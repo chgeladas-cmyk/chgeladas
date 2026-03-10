@@ -520,6 +520,24 @@ const ComandaFechamento = (() => {
     _desconto   = 0;
     _pagamentos = [];
 
+    // BUG-02 FIX: limpa o campo de desconto e a info ao re-abrir.
+    // O input é injetado uma única vez no DOM — sem este reset, o valor
+    // da abertura anterior permanece visível e pode re-disparar via oninput.
+    const _descInp  = Utils.el('_cmdDescontoInput');
+    const _descInfo = Utils.el('_cmdDescontoInfo');
+    if (_descInp)  _descInp.value = '';
+    if (_descInfo) _descInfo.classList.add('hidden');
+
+    // BUG-03 FIX: oculta e limpa o painel de pagamentos parciais ao re-abrir.
+    // O wrap é injetado uma única vez — sem este reset, a lista de pagamentos
+    // de uma conta anterior continua visível na próxima abertura.
+    const _multiWrap = Utils.el('_cmdMultiPgtoWrap');
+    const _pgtoLista = Utils.el('_cmdPgtosLista');
+    const _pgtoRest  = Utils.el('_cmdPgtoRestante');
+    if (_multiWrap) _multiWrap.classList.add('hidden');
+    if (_pgtoLista) _pgtoLista.innerHTML = '';
+    if (_pgtoRest)  _pgtoRest.textContent = '';
+
     const nome = Utils.el('cmdFechNome');
     if (nome) nome.textContent = c.nome;
 

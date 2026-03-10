@@ -325,9 +325,19 @@ const FinanceService = (() => {
     const novoTotal = parseFloat(Utils.el('evTotal')?.value) || 0;
     const novoLucro = parseFloat(Utils.el('evLucro')?.value) || 0;
     if (!novaData) { UIService.showToast('Erro', 'Data inválida', 'error'); return; }
+
+    // BUG-01 FIX: derivar dataCurta (YYYY-MM-DD) a partir do campo data editado.
+    // Sem isso, filtros de período (hoje/semana/mês) continuavam usando a dataCurta
+    // original e ignoravam a data corrigida pelo admin.
+    // novaData vem de Utils.timestamp() → formato "DD/MM/AAAA, HH:MM:SS"
+    const _mData = String(novaData).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    const novaDataCurta = _mData
+      ? `${_mData[3]}-${_mData[2].padStart(2, '0')}-${_mData[1].padStart(2, '0')}`
+      : (vendas[idx].dataCurta || Utils.todayISO());
+
     Store.mutate(state => {
       const i = state.vendas.findIndex(v => String(v.id) === id);
-      if (i !== -1) state.vendas[i] = { ...state.vendas[i], data: novaData, total: novoTotal, lucro: novoLucro };
+      if (i !== -1) state.vendas[i] = { ...state.vendas[i], data: novaData, dataCurta: novaDataCurta, total: novoTotal, lucro: novoLucro };
     }, true);
     SyncService.persist();
     UIService.closeModal('modalEditVenda');

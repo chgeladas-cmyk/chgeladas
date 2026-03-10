@@ -69,8 +69,11 @@ const AuditService = (() => {
         }
       }, true); // silent — não dispara re-render
 
-      // Persiste imediatamente para não perder em falhas
-      SyncService.persistNow();
+      // BUG-05 FIX: usar persist() com debounce em vez de persistNow().
+      // Após uma venda com estoque baixo, registrar() era chamado 3–4 vezes
+      // consecutivas, disparando persistNow() (e CH_BACKUP) a cada chamada.
+      // persist() agrupa todas as escritas em um único flush após 300ms.
+      SyncService.persist();
 
     } catch (err) {
       console.warn('[AuditService] Falha ao registrar:', err);
