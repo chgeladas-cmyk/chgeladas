@@ -35,7 +35,7 @@ const FIRESTORE_DOC_ID     = 'sistema';
 const FIREBASE_WAIT_MS     = 5_000;   // timeout aguardando Firebase inicializar
 const BACKUP_DEBOUNCE_MS   = 1_500;   // debounce de escrita no Firestore
 const BACKUP_TIMEOUT_MS    = 25_000;  // timeout máximo por operação (aumentado: 12→25s)
-const SNAPSHOT_MIN_GAP_MS  = 10_000;  // FIX: aumentado de 2s→10s para proteger saves locais
+const SNAPSHOT_MIN_GAP_MS  = 3_000;   // reduzido de 10s→3s: janela menor preserva updates simultâneos
 
 /* ═══════════════════════════════════════════════════════════════════
    ESTADO INTERNO
@@ -270,18 +270,31 @@ async function _startRealtimeListener() {
         if (!remote || typeof remote !== 'object') return;
 
         const remoteTs = remote._updatedAt ?? 0;
-        const localTs  = _readLocal()?._updatedAt ?? 0;
 
-        // Anti-loop: se acabamos de salvar localmente, ignoramos nosso próprio snapshot
+        // Só aplica se o remoto for mais novo que o que está EM MEMÓRIA agora
+        // (não compara com localStorage — já pode ter sido sobrescrito)
+        const memTs = _readLocal()?._updatedAt ?? 0;
+        if (remoteTs <= memTs) return;
+
+        // Anti-loop: se acabamos de salvar localmente, este snapshot provavelmente
+        // é o eco do nosso próprio save. Agenda retry para depois do cooldown
+        // em vez de descartar — assim não perdemos updates de outro device que
+        // chegaram dentro da janela de proteção.
         const msSinceLastSave = Date.now() - _lastLocalSave;
-        if (msSinceLastSave < SNAPSHOT_MIN_GAP_MS) return;
+        if (msSinceLastSave < SNAPSHOT_MIN_GAP_MS) {
+          const delay = SNAPSHOT_MIN_GAP_MS - msSinceLastSave + 200;
+          console.info(`[Sync] ⏳ Snapshot em cooldown — reagendado em ${delay}ms`);
+          setTimeout(() => _applyRemoteSnapshot(remote, remoteTs), delay);
+          return;
+        }
 
-        // Anti-flood: snapshots chegando muito rápido (raro, mas protege)
+        // Anti-flood: snapshots em rafada muito rápida (edge case)
         const msSinceLast = Date.now() - _lastSnapshotApply;
-        if (msSinceLast < SNAPSHOT_MIN_GAP_MS) return;
-
-        // Só aplica se o remoto for mais novo que o local
-        if (remoteTs <= localTs) return;
+        if (msSinceLast < SNAPSHOT_MIN_GAP_MS) {
+          const delay = SNAPSHOT_MIN_GAP_MS - msSinceLast + 200;
+          setTimeout(() => _applyRemoteSnapshot(remote, remoteTs), delay);
+          return;
+        }
 
         // Respeita lock de sync (app-core.js seta CH_SYNC_LOCK durante checkout)
         if (window.CH_SYNC_LOCK) {

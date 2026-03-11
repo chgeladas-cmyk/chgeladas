@@ -19,7 +19,7 @@
 ═══════════════════════════════════════════════════════════════════ */
 const CONSTANTS = Object.freeze({
   STORAGE_KEY: 'CH_GELADAS_DB_ENTERPRISE',
-  SYNC_LOCK_DURATION_MS: 15_000, // FIX: aumentado de 6s→15s para proteger saves locais
+  SYNC_LOCK_DURATION_MS: 5_000,  // reduzido de 15s→5s: protege saves locais sem bloquear sync simultâneo
   TOAST_DURATION_MS: 2_800,
   SYNC_FALLBACK_MS: 5_000,
   CART_ANIMATION_MS: 400,
@@ -530,22 +530,22 @@ const SyncService = (() => {
     }
     if (!remoteData || typeof remoteData !== 'object') return;
 
-    // FIX CRÍTICO: comparar _updatedAt ANTES de aplicar dados remotos.
-    // Sem esta verificação, snapshots do Firestore sobrescreviam saves locais
-    // recentes causando reversão do estoque.
+    // BUG FIX: comparar _updatedAt contra o estado EM MEMÓRIA, não contra o localStorage.
+    // Antes, sync.js/_applyRemoteSnapshot gravava o dado remoto no localStorage ANTES de chamar
+    // esta função. Resultado: localTs === remoteTs → condição (remoteTs <= localTs) sempre
+    // verdadeira → função retornava sem nunca atualizar o Store ou emitir sync:remote-applied.
+    // O sync em tempo real estava completamente inativo.
     try {
-      const raw      = localStorage.getItem(CONSTANTS.STORAGE_KEY);
-      const localTs  = raw ? (JSON.parse(raw)._updatedAt ?? 0) : 0;
+      const localTs  = Store.getState()?._updatedAt ?? 0;
       const remoteTs = remoteData._updatedAt ?? 0;
       if (remoteTs <= localTs) {
-        console.info(`[SyncService] Remote (${new Date(remoteTs).toLocaleTimeString()}) ≤ local (${new Date(localTs).toLocaleTimeString()}) — ignorado`);
+        console.info(`[SyncService] Remote (${new Date(remoteTs).toLocaleTimeString()}) ≤ memória (${new Date(localTs).toLocaleTimeString()}) — ignorado`);
         return;
       }
-    } catch { /* se JSON.parse falhar, permite aplicar */ }
+    } catch { /* se falhar, permite aplicar */ }
 
     try {
       Store.setState(remoteData, true);
-      // FIX: preservar _updatedAt remoto no localStorage para comparações futuras
       const stateWithTs = { ...Store.getState(), _updatedAt: remoteData._updatedAt ?? Date.now() };
       localStorage.setItem(CONSTANTS.STORAGE_KEY, JSON.stringify(stateWithTs));
       EventBus.emit('sync:remote-applied', remoteData);
