@@ -1,10 +1,23 @@
 // CH Geladas PDV — Service Worker
-const CACHE_NAME = 'ch-geladas-v1';
+// BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
+const CACHE_NAME = 'ch-geladas-v2';
 
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
+  // Módulos JS — obrigatórios para funcionamento offline
+  '/app-dialogs.js',
+  '/app-core.js',
+  '/app-financeiro.js',
+  '/app-ia.js',
+  '/app-delivery.js',
+  '/app-ponto.js',
+  '/app-comanda.js',
+  '/app-notif.js',
+  '/firebase.js',
+  '/sync.js',
+  // Ícones PWA
   '/icon-72.png',
   '/icon-96.png',
   '/icon-128.png',

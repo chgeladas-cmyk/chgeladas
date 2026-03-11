@@ -1256,6 +1256,8 @@ EventBus.on('delivery:status-changed',      () => DeliveryRenderer.renderDeliver
 EventBus.on('delivery:cancelado',           () => DeliveryRenderer.renderDelivery());
 EventBus.on('delivery:entregador-atribuido',() => DeliveryRenderer.renderDelivery());
 EventBus.on('delivery:pedido-criado',       () => DeliveryRenderer.renderDelivery());
+// FIX: filtro-changed → re-renderiza lista de pedidos quando filtro muda programaticamente
+EventBus.on('delivery:filtro-changed',      () => DeliveryRenderer.renderDelivery());
 EventBus.on('delivery:zona-added',          () => { DeliveryRenderer.renderZonaLista(); DeliveryRenderer.populateMpZonas(); DeliveryRenderer.populatePubZonas(); });
 EventBus.on('delivery:zona-removed',        () => { DeliveryRenderer.renderZonaLista(); DeliveryRenderer.populateMpZonas(); DeliveryRenderer.populatePubZonas(); });
 EventBus.on('delivery:entregador-added',    () => { DeliveryRenderer.renderEntLista();  DeliveryRenderer.populateMpEntregadores(); });

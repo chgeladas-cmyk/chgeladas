@@ -1744,6 +1744,24 @@ const Bootstrap = (() => {
       RenderService.updateStats();
     });
 
+    // FIX: auth:logout → trava a UI imediatamente (lock screen + limpa classes de role)
+    EventBus.on('auth:logout', () => {
+      document.body.classList.remove('is-admin', 'is-pdv');
+      UIService.showLock();
+    });
+
+    // FIX: state:reset → re-renderiza catálogo e stats após reset total de dados
+    EventBus.on('state:reset', () => {
+      RenderService.renderCatalogo();
+      RenderService.updateStats();
+    });
+
+    // FIX: sync:error → toast não intrusivo para notificar falha de backup
+    EventBus.on('sync:error', (err) => {
+      const msg = err?.message || 'Verifique a conexão';
+      UIService.showToast('Sync falhou', msg, 'error');
+    });
+
     // Atualiza aviso do PDV quando caixa ou ponto muda
     EventBus.on('caixa:aberto',     () => RenderService.renderCatalogo());
     EventBus.on('caixa:fechado',    () => RenderService.renderCatalogo());
