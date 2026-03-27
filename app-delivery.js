@@ -206,110 +206,116 @@ const DeliveryService = (() => {
    * @param {string|number} pedId
    */
   async function cancelarPedido(pedId) {
-    const pedido = Store.Selectors.getPedidoById(pedId);
-    if (!pedido) return;
+    try {
+      const pedido = Store.Selectors.getPedidoById(pedId);
+      if (!pedido) return;
 
-    const ok = await Dialog.danger({
-      title:        `Cancelar Pedido #${pedido.num}?`,
-      message:      'O estoque será devolvido automaticamente.',
-      icon:         'fa-ban',
-      confirmLabel: 'Cancelar Pedido',
-    });
-    if (!ok) return;
+      const ok = await Dialog.danger({
+        title:        `Cancelar Pedido #${pedido.num}?`,
+        message:      'O estoque será devolvido automaticamente.',
+        icon:         'fa-ban',
+        confirmLabel: 'Cancelar Pedido',
+      });
+      if (!ok) return;
 
-    // Devolve estoque apenas se ainda não entregue
-    if (pedido.status !== DeliveryConstants.STATUS.ENTREGUE) {
-      const today  = Utils.todayISO();
-      const nowStr = Utils.now();
+      // Devolve estoque apenas se ainda não entregue
+      if (pedido.status !== DeliveryConstants.STATUS.ENTREGUE) {
+        const today  = Utils.todayISO();
+        const nowStr = Utils.now();
+
+        Store.mutate(state => {
+          (pedido.itens || []).forEach(item => {
+            const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
+            if (!prod) return;
+            const qtdAntes = prod.qtdUn;
+            prod.qtdUn += (item.qtd || 1);
+            state.inventario.unshift({
+              id:           Utils.generateId(),
+              vendaId:      pedido.id,
+              produto:      item.nome,
+              label:        `DEVOLUÇÃO DELIVERY #${pedido.num}`,
+              preco:        0,
+              qtdMovimento: item.qtd || 1,
+              qtdAntes,
+              qtdDepois:    prod.qtdUn,
+              data:         today,
+              hora:         nowStr,
+              tipo:         'DEVOLUCAO',
+            });
+          });
+        }, true); // fim Store.mutate
+      }
 
       Store.mutate(state => {
-        (pedido.itens || []).forEach(item => {
-          const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
-          if (!prod) return;
-          const qtdAntes = prod.qtdUn;
-          prod.qtdUn += (item.qtd || 1);
-          state.inventario.unshift({
-            id:           Utils.generateId(),
-            vendaId:      pedido.id,
-            produto:      item.nome,
-            label:        `DEVOLUÇÃO DELIVERY #${pedido.num}`,
-            preco:        0,
-            qtdMovimento: item.qtd || 1,
-            qtdAntes,
-            qtdDepois:    prod.qtdUn,
-            data:         today,
-            hora:         nowStr,
-            tipo:         'DEVOLUCAO',
-          });
-        });
-      }, true); // fim Store.mutate
-    }
+        const p = state.delivery.pedidos.find(x => String(x.id) === String(pedId));
+        if (p) {
+          p.status           = DeliveryConstants.STATUS.CANCELADO;
+          p.dataCancelamento = Utils.timestamp();
+        }
+      }, true);
 
-    Store.mutate(state => {
-      const p = state.delivery.pedidos.find(x => String(x.id) === String(pedId));
-      if (p) {
-        p.status           = DeliveryConstants.STATUS.CANCELADO;
-        p.dataCancelamento = Utils.timestamp();
-      }
-    }, true);
-
-    SyncService.persist();
-    UIService.showToast('Delivery', `Pedido #${pedido.num} cancelado — estoque devolvido`, 'warning');
-    UIService.closeModal('modalPedido');
-    EventBus.emit('delivery:cancelado', Store.Selectors.getPedidoById(pedId));
+      SyncService.persist();
+      UIService.showToast('Delivery', `Pedido #${pedido.num} cancelado — estoque devolvido`, 'warning');
+      UIService.closeModal('modalPedido');
+      EventBus.emit('delivery:cancelado', Store.Selectors.getPedidoById(pedId));
+  
+    } catch (err) { console.error('[cancelarPedido]', err); }
   }
 
   async function excluirPedido(pedId) {
-    const pedido = Store.Selectors.getPedidoById(pedId);
-    if (!pedido) return;
+    try {
+      const pedido = Store.Selectors.getPedidoById(pedId);
+      if (!pedido) return;
 
-    const ok = await Dialog.danger({
-      title:        `Excluir Pedido #${pedido.num}?`,
-      message:      'Esta ação não pode ser desfeita. O estoque será devolvido se aplicável.',
-      icon:         'fa-trash',
-      confirmLabel: 'Excluir Pedido',
-    });
-    if (!ok) return;
+      const ok = await Dialog.danger({
+        title:        `Excluir Pedido #${pedido.num}?`,
+        message:      'Esta ação não pode ser desfeita. O estoque será devolvido se aplicável.',
+        icon:         'fa-trash',
+        confirmLabel: 'Excluir Pedido',
+      });
+      if (!ok) return;
 
-    const statusesQueDevolvem = [DeliveryConstants.STATUS.NOVO, DeliveryConstants.STATUS.PREPARANDO, DeliveryConstants.STATUS.A_CAMINHO];
-    Store.mutate(state => {
-      if (statusesQueDevolvem.includes(pedido.status)) {
-        const today  = Utils.todayISO();
-        const nowStr = Utils.now();
-        (pedido.itens || []).forEach(item => {
-          const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
-          if (!prod) return;
-          const qtdAntes = prod.qtdUn;
-          prod.qtdUn += (item.qtd || 1);
-          state.inventario.unshift({
-            id:           Utils.generateId(),
-            vendaId:      pedido.id,
-            produto:      item.nome,
-            label:        `DEVOLUÇÃO EXCLUÍDO #${pedido.num}`,
-            preco:        0,
-            qtdMovimento: item.qtd || 1,
-            qtdAntes,
-            qtdDepois:    prod.qtdUn,
-            data:         today,
-            hora:         nowStr,
-            tipo:         'DEVOLUCAO',
+      const statusesQueDevolvem = [DeliveryConstants.STATUS.NOVO, DeliveryConstants.STATUS.PREPARANDO, DeliveryConstants.STATUS.A_CAMINHO];
+      Store.mutate(state => {
+        if (statusesQueDevolvem.includes(pedido.status)) {
+          const today  = Utils.todayISO();
+          const nowStr = Utils.now();
+          (pedido.itens || []).forEach(item => {
+            const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
+            if (!prod) return;
+            const qtdAntes = prod.qtdUn;
+            prod.qtdUn += (item.qtd || 1);
+            state.inventario.unshift({
+              id:           Utils.generateId(),
+              vendaId:      pedido.id,
+              produto:      item.nome,
+              label:        `DEVOLUÇÃO EXCLUÍDO #${pedido.num}`,
+              preco:        0,
+              qtdMovimento: item.qtd || 1,
+              qtdAntes,
+              qtdDepois:    prod.qtdUn,
+              data:         today,
+              hora:         nowStr,
+              tipo:         'DEVOLUCAO',
+            });
           });
-        });
-      }
+        }
 
-      // Remove venda correspondente do financeiro (só existe se já foi ENTREGUE)
-      const vidx = state.vendas.findIndex(v => v.pedidoNum === pedido.num && v.origem === 'DELIVERY');
-      if (vidx !== -1) state.vendas.splice(vidx, 1);
+        // Remove venda correspondente do financeiro (só existe se já foi ENTREGUE)
+        const vidx = state.vendas.findIndex(v => v.pedidoNum === pedido.num && v.origem === 'DELIVERY');
+        if (vidx !== -1) state.vendas.splice(vidx, 1);
 
-      // Remove pedido
-      const idx = state.delivery.pedidos.findIndex(p => String(p.id) === String(pedId));
-      if (idx !== -1) state.delivery.pedidos.splice(idx, 1);
-    }, true);
+        // Remove pedido
+        const idx = state.delivery.pedidos.findIndex(p => String(p.id) === String(pedId));
+        if (idx !== -1) state.delivery.pedidos.splice(idx, 1);
+      }, true);
 
-    SyncService.persist();
-    UIService.showToast('Delivery', `Pedido #${pedido.num} excluído — estoque devolvido`, 'error');
-    UIService.closeModal('modalPedido');
-    DeliveryRenderer.renderDelivery();
+      SyncService.persist();
+      UIService.showToast('Delivery', `Pedido #${pedido.num} excluído — estoque devolvido`, 'error');
+      UIService.closeModal('modalPedido');
+      DeliveryRenderer.renderDelivery();
+  
+    } catch (err) { console.error('[excluirPedido]', err); }
   }
 
   /* ── WhatsApp ────────────────────────────────────────────── */
@@ -514,6 +520,8 @@ const DeliveryService = (() => {
       origem,
       data:          today,
       hora:          nowStr,
+      tsCriado:      Date.now(),          // para cronômetro de atraso
+      tempoEstimado: pedidoData.tempoEstimado || 40, // minutos estimados
     };
 
     // Adiciona apenas o pedido — venda será registrada ao confirmar ENTREGUE
@@ -712,14 +720,26 @@ const DeliveryRenderer = (() => {
     const statusCls = DeliveryConstants.STATUS_CSS[pedido.status] || '';
     const statusLbl = DeliveryConstants.STATUS_LABEL[pedido.status] || pedido.status;
 
+    // Cronômetro de atraso
+    const ativo    = !['ENTREGUE','CANCELADO'].includes(pedido.status);
+    const minsDecorridos = pedido.tsCriado ? Math.floor((Date.now() - pedido.tsCriado) / 60000) : 0;
+    const minsEstimados  = pedido.tempoEstimado || 40;
+    const atrasado       = ativo && minsDecorridos > minsEstimados;
+    const tempoBadge = ativo
+      ? `<span class="badge ${atrasado ? 'b-red' : minsDecorridos > minsEstimados * 0.8 ? 'b-amber' : 'b-blue'} text-[8px]">
+           <i class="fas fa-clock mr-1"></i>${minsDecorridos}min${atrasado ? ' ⚠️ ATRASADO' : ' / ' + minsEstimados + 'min est.'}
+         </span>`
+      : '';
+
     _setText('mpDetailTitle', `Pedido #${pedido.num}`);
 
     Utils.el('mpDetailBody').innerHTML = `
-      <div class="flex items-center gap-2 mb-3">
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
         <span class="badge ${statusCls}" role="status">${statusLbl}</span>
         <span class="badge ${pedido.origem === 'PUBLICO' ? 'b-purple' : 'b-amber'}">
           ${pedido.origem === 'PUBLICO' ? 'Online' : 'Manual'}
         </span>
+        ${tempoBadge}
       </div>
       <dl class="space-y-1.5 text-[10px]">
         <div class="flex gap-1"><dt class="text-slate-500 font-bold">Cliente:</dt><dd class="font-black text-slate-200">${_esc(pedido.clienteNome)}</dd></div>
@@ -1349,3 +1369,19 @@ function renderPubCatalog()    { PublicOrderService.renderPubCatalog(); }
 function pubAjQ(id, d, p, n)  { PublicOrderService.pubAjQ(id, d, p, n); }
 function pubSelecionarZona()   { PublicOrderService.pubSelecionarZona(); }
 function confirmarPedidoPublico() { PublicOrderService.confirmarPedidoPublico(); }
+
+/* ── Monitor de atraso: verifica pedidos atrasados a cada 2min ── */
+setInterval(() => {
+  if (!Utils.el('tab-delivery')?.classList.contains('active')) return;
+  const pedidos = Store.Selectors.getPedidos();
+  const atrasados = pedidos.filter(p => {
+    if (['ENTREGUE','CANCELADO'].includes(p.status)) return false;
+    if (!p.tsCriado) return false;
+    const mins = Math.floor((Date.now() - p.tsCriado) / 60000);
+    return mins > (p.tempoEstimado || 40);
+  });
+  if (atrasados.length > 0) {
+    EventBus.emit('notif:alerta-delivery', { qtd: atrasados.length, pedidos: atrasados });
+  }
+  DeliveryRenderer.renderDelivery();
+}, 120_000);

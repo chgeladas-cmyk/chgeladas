@@ -1,31 +1,32 @@
 // CH Geladas PDV — Service Worker
 // BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
-const CACHE_NAME = 'ch-geladas-v2';
+const CACHE_NAME = 'pdv-app-v4'; // nome genérico — isolamento real é feito pelo domínio
 
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
+  '/Ch-comercial/',
+  '/Ch-comercial/index.html',
+  '/Ch-comercial/manifest.json',
   // Módulos JS — obrigatórios para funcionamento offline
-  '/app-dialogs.js',
-  '/app-core.js',
-  '/app-financeiro.js',
-  '/app-ia.js',
-  '/app-delivery.js',
-  '/app-ponto.js',
-  '/app-comanda.js',
-  '/app-notif.js',
-  '/firebase.js',
-  '/sync.js',
+  '/Ch-comercial/app-dialogs.js',
+  '/Ch-comercial/app-core.js',
+  '/Ch-comercial/app-financeiro.js',
+  '/Ch-comercial/app-ia.js',
+  '/Ch-comercial/app-delivery.js',
+  '/Ch-comercial/app-ponto.js',
+  '/Ch-comercial/app-comanda.js',
+  '/Ch-comercial/app-notif.js',
+  '/Ch-comercial/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
+  '/Ch-comercial/firebase.js',
+  '/Ch-comercial/sync.js',
   // Ícones PWA
-  '/icon-72.png',
-  '/icon-96.png',
-  '/icon-128.png',
-  '/icon-144.png',
-  '/icon-152.png',
-  '/icon-192.png',
-  '/icon-384.png',
-  '/icon-512.png'
+  '/Ch-comercial/icon-72.png',
+  '/Ch-comercial/icon-96.png',
+  '/Ch-comercial/icon-128.png',
+  '/Ch-comercial/icon-144.png',
+  '/Ch-comercial/icon-152.png',
+  '/Ch-comercial/icon-192.png',
+  '/Ch-comercial/icon-384.png',
+  '/Ch-comercial/icon-512.png'
 ];
 
 // Instalação: pré-cacheia os assets essenciais

@@ -473,3 +473,89 @@ EventBus.on('sync:remote-applied', () => {
 window.auditExportar   = () => AuditService.exportar();
 window.auditRender     = () => AuditRenderer.render();
 window.testTelegram    = () => NotifService.testTelegram(); // diagnóstico: rode no console
+
+/* ═══════════════════════════════════════════════════════════════
+   SOM SERVICE — Web Audio API para alertas sonoros
+═══════════════════════════════════════════════════════════════ */
+const SomService = (() => {
+  let _ctx = null;
+
+  function _getCtx() {
+    if (!_ctx) {
+      try { _ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {}
+    }
+    return _ctx;
+  }
+
+  /**
+   * Toca um padrão sonoro por tipo de alerta
+   * @param {'venda'|'alerta'|'critico'|'ponto'} tipo
+   */
+  function tocar(tipo = 'alerta') {
+    if (!Store.Selectors.getConfig()?.somNotificacoes) return;
+    const ctx = _getCtx();
+    if (!ctx) return;
+
+    const padroes = {
+      venda:   [{ freq: 523, dur: 0.1 }, { freq: 659, dur: 0.1 }, { freq: 784, dur: 0.2 }],
+      alerta:  [{ freq: 440, dur: 0.15 }, { freq: 330, dur: 0.15 }, { freq: 440, dur: 0.3 }],
+      critico: [{ freq: 880, dur: 0.1 }, { freq: 880, dur: 0.1 }, { freq: 660, dur: 0.3 }],
+      ponto:   [{ freq: 523, dur: 0.12 }, { freq: 659, dur: 0.2 }],
+    };
+
+    let t = ctx.currentTime;
+    (padroes[tipo] || padroes.alerta).forEach(({ freq, dur }) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.25, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.start(t);
+      osc.stop(t + dur);
+      t += dur + 0.05;
+    });
+  }
+
+  return Object.freeze({ tocar });
+})();
+
+/* ── Toca som em eventos relevantes ─────────────────────────── */
+EventBus.on('venda:concluida',       () => SomService.tocar('venda'));
+EventBus.on('comanda:finalizada',    () => SomService.tocar('venda'));
+EventBus.on('ponto:registered',      () => SomService.tocar('ponto'));
+EventBus.on('caixa:aberto',          () => SomService.tocar('alerta'));
+EventBus.on('caixa:fechado',         () => SomService.tocar('alerta'));
+EventBus.on('notif:alerta-comanda',  () => SomService.tocar('critico'));
+EventBus.on('notif:alerta-delivery', () => SomService.tocar('critico'));
+// FIX: som ao delivery ser entregue
+EventBus.on('delivery:status-changed', pedido => {
+  if (pedido?.status === 'ENTREGUE') SomService.tocar('venda');
+});
+
+/* ── Alerta Telegram para comandas atrasadas ─────────────────── */
+EventBus.on('notif:alerta-comanda', ({ qtd }) => {
+  NotifService.telegram(
+    `⏰ <b>Comanda Atrasada</b>\n${qtd} comanda(s) com mais de 20 min sem fechar.\nVerifique o monitor.`,
+    'comanda_atraso'
+  );
+});
+
+/* ── Alerta Telegram para deliveries atrasados ───────────────── */
+EventBus.on('notif:alerta-delivery', ({ qtd }) => {
+  NotifService.telegram(
+    `🛵 <b>Delivery Atrasado</b>\n${qtd} pedido(s) acima do tempo estimado.\nVerifique as entregas.`,
+    'delivery_atraso'
+  );
+});
+
+/* ── Config: soma notificacoes habilitado por padrão ─────────── */
+EventBus.on('core:ready', () => {
+  if (Store.Selectors.getConfig().somNotificacoes === undefined) {
+    Store.mutate(s => { s.config.somNotificacoes = true; }, true);
+  }
+});
+
+window.SomService = SomService;

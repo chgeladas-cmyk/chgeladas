@@ -40,18 +40,37 @@ import { getFirestore, enableNetwork, disableNetwork }
                                from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ═══════════════════════════════════════════════════════════════════
-   CONFIGURAÇÃO DO PROJETO
+   CONFIGURAÇÃO DO PROJETO — DINÂMICA (multi-tenant)
+   → Configuração padrão usada se não houver config personalizada.
+   → Para escalar para outras lojas, configure via ⚙️ Configurações
+     no app (seção Firebase) — armazenado em localStorage sob a
+     chave 'FIREBASE_CONFIG_CUSTOM'.
    → Gere e restrinja sua API key em: console.cloud.google.com
    → Restrinja domínios em: console.firebase.google.com → Auth → Settings
 ═══════════════════════════════════════════════════════════════════ */
-const FIREBASE_CONFIG = Object.freeze({
+const _DEFAULT_FIREBASE_CONFIG = {
   apiKey:            "AIzaSyCPq8-B4l-kThTXtX9CVBTdpzarBObUYxI",
   authDomain:        "ch-geladas.firebaseapp.com",
   projectId:         "ch-geladas",
   storageBucket:     "ch-geladas.firebasestorage.app",
   messagingSenderId: "859746983655",
   appId:             "1:859746983655:web:dce025d5048850923a8c42",
-});
+};
+
+function _loadFirebaseConfig() {
+  try {
+    const loja = JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}');
+    if (loja.firebase && loja.firebase.apiKey && loja.firebase.projectId) {
+      console.info('[Firebase] 🔧 Config personalizada →', loja.firebase.projectId);
+      return loja.firebase;
+    }
+  } catch (e) {
+    console.warn('[Firebase] ⚠️ Usando config padrão:', e.message);
+  }
+  return _DEFAULT_FIREBASE_CONFIG;
+}
+
+const FIREBASE_CONFIG = Object.freeze(_loadFirebaseConfig());
 
 /* ═══════════════════════════════════════════════════════════════════
    GERENCIAMENTO DE CONECTIVIDADE

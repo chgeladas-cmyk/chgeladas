@@ -42,7 +42,7 @@ const ComandaService = (() => {
     );
   }
 
-  function nova(nome) {
+  function nova(nome, prioridade = 'NORMAL') {
     const n = (nome || '').trim() || `Comanda ${getAbertas().length + 1}`;
     const c = {
       id:         String(Utils.generateId()),
@@ -50,6 +50,7 @@ const ComandaService = (() => {
       itens:      [],
       status:     'ABERTA',
       total:      0,
+      prioridade: prioridade || 'NORMAL', // ALTA | NORMAL | BAIXA
       horaAberta: Utils.now(),
       dataAberta: Utils.today(),
       tsAberta:   Date.now(),
@@ -190,12 +191,14 @@ const ComandaService = (() => {
     const descontoFinal = Math.max(0, Math.min(Number(desconto) || 0, comanda.total));
 
     // Debita estoque e registra inventário via Store.mutate()
+    const _auditItems = [];
     Store.mutate(state => {
       comanda.itens.forEach(item => {
         const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
         if (!prod) return;
         const qtdAntes = prod.qtdUn;
         prod.qtdUn -= item.desconto;
+        _auditItems.push({ prodId: prod.id, produto: prod.nome, qtdAntes, qtdDepois: prod.qtdUn, label: item.label });
         state.inventario.unshift({
           id:           String(Utils.generateId()),
           vendaId,
@@ -211,6 +214,15 @@ const ComandaService = (() => {
         });
       });
     }, true);
+    // Auditoria de estoque — comanda
+    if (typeof _registrarAuditEstoque === 'function') {
+      _auditItems.forEach(a => _registrarAuditEstoque({
+        prodId: a.prodId, produto: a.produto,
+        qtdAntes: a.qtdAntes, qtdDepois: a.qtdDepois,
+        motivo: `Venda via Comanda #${String(vendaId).slice(-6)}`,
+        tipo: 'VENDA',
+      }));
+    }
 
     const subtotal = comanda.total;
     const total    = Math.max(0, subtotal - descontoFinal);
@@ -314,22 +326,46 @@ const ComandaRenderer = (() => {
       return;
     }
 
-    cont.innerHTML = abertas.map(c => {
-      const mins    = Math.max(1, Math.floor((Date.now() - (c.tsAberta || Date.now())) / 60000));
+    // Ordenação: ALTA primeiro, depois por tempo (mais antiga primeiro)
+    const ordenadas = [...abertas].sort((a, b) => {
+      const pOrd = { ALTA: 0, NORMAL: 1, BAIXA: 2 };
+      const po = (pOrd[a.prioridade] ?? 1) - (pOrd[b.prioridade] ?? 1);
+      if (po !== 0) return po;
+      return (a.tsAberta || 0) - (b.tsAberta || 0);
+    });
+
+    const PRIO_CFG = {
+      ALTA:   { cor: 'border-l-red-500',    badge: '🔴 Alta',   cls: 'text-red-400'    },
+      NORMAL: { cor: 'border-l-purple-600', badge: '🟡 Normal', cls: 'text-purple-400' },
+      BAIXA:  { cor: 'border-l-slate-600',  badge: '🟢 Baixa',  cls: 'text-slate-400'  },
+    };
+
+    cont.innerHTML = ordenadas.map(c => {
+      const mins    = Math.max(0, Math.floor((Date.now() - (c.tsAberta || Date.now())) / 60000));
       const tempo   = mins < 60 ? `${mins}min` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}`;
+      const urgente = mins >= 20;
+      const medio   = mins >= 10 && !urgente;
       const preview = c.itens.length > 0
         ? c.itens.slice(0, 3).map(i => i.nome).join(', ') + (c.itens.length > 3 ? ` +${c.itens.length - 3}` : '')
         : 'Sem itens ainda';
+      const pCfg = PRIO_CFG[c.prioridade] || PRIO_CFG.NORMAL;
+      const tempoCls = urgente ? 'text-red-400 font-black animate-pulse' : medio ? 'text-amber-400 font-bold' : 'text-slate-500 font-bold';
       return `
         <article onclick="cmdAbrirDetalhe('${c.id}')"
-          class="glass-card rounded-2xl p-4 cursor-pointer hover:border-purple-500/40 transition-all active:scale-[.97] border-l-4 border-l-purple-600 relative">
-          <button onclick="event.stopPropagation();cmdCancelarById('${c.id}')"
-            class="absolute top-3 right-3 w-6 h-6 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition-all">
-            <i class="fas fa-times text-[8px]"></i>
-          </button>
-          <p class="text-sm font-black text-white truncate pr-8">${_esc(c.nome)}</p>
-          <p class="text-[8px] text-slate-500 font-bold mt-0.5">
-            <i class="fas fa-clock mr-1"></i>${c.horaAberta} · ${tempo}
+          class="glass-card rounded-2xl p-4 cursor-pointer hover:border-purple-500/40 transition-all active:scale-[.97] border-l-4 ${pCfg.cor} relative ${urgente ? 'ring-1 ring-red-500/30' : ''}">
+          <div class="absolute top-3 right-3 flex gap-1">
+            <button onclick="event.stopPropagation();cmdAlterarPrioridade('${c.id}')"
+              class="h-6 px-2 rounded-md bg-slate-800 ${pCfg.cls} text-[8px] font-black hover:opacity-80 transition-all">
+              ${pCfg.badge}
+            </button>
+            <button onclick="event.stopPropagation();cmdCancelarById('${c.id}')"
+              class="w-6 h-6 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition-all">
+              <i class="fas fa-times text-[8px]"></i>
+            </button>
+          </div>
+          <p class="text-sm font-black text-white truncate pr-24">${_esc(c.nome)}</p>
+          <p class="text-[8px] ${tempoCls} mt-0.5">
+            <i class="fas fa-clock mr-1"></i>${c.horaAberta} · ${tempo}${urgente ? ' ⚠️' : ''}
           </p>
           <div class="flex items-end justify-between mt-3">
             <div>
@@ -634,40 +670,43 @@ const ComandaFechamento = (() => {
   }
 
   async function adicionarPagamentoParcial(forma) {
-    const cmdId = _pendingId;
-    if (!cmdId) return;
-    const c   = ComandaService.getById(cmdId);
-    if (!c) return;
-    const totalFinal  = Math.max(0, c.total - _desconto);
-    const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
-    const restante    = totalFinal - totalPgtos;
-    if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
+    try {
+      const cmdId = _pendingId;
+      if (!cmdId) return;
+      const c   = ComandaService.getById(cmdId);
+      if (!c) return;
+      const totalFinal  = Math.max(0, c.total - _desconto);
+      const totalPgtos  = _pagamentos.reduce((a, p) => a + p.valor, 0);
+      const restante    = totalFinal - totalPgtos;
+      if (restante <= 0.009) { UIService.showToast('Atenção', 'Total já coberto', 'warning'); return; }
 
-    const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
-    const str = await Dialog.prompt({
-      title:        `Valor — ${forma}`,
-      message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
-      placeholder:  restante.toFixed(2),
-      defaultValue: restante.toFixed(2),
-      confirmLabel: 'Adicionar',
-      icon:         icones[forma] || 'fa-hand-holding-usd',
-      iconBg:       'bg-emerald-500/15',
-      iconColor:    'text-emerald-400',
-    });
-    if (!str) return;
-    const val = parseFloat(String(str).replace(',', '.')) || 0;
-    if (val <= 0) return;
-    _pagamentos.push({ forma, valor: Math.min(val, restante) });
-    _renderPgtos(totalFinal);
+      const icones = { Dinheiro: 'fa-money-bill-wave', PIX: 'fa-qrcode', Cartão: 'fa-credit-card', Crédito: 'fa-credit-card', Débito: 'fa-credit-card' };
+      const str = await Dialog.prompt({
+        title:        `Valor — ${forma}`,
+        message:      `Restante a cobrir: ${Utils.formatCurrency(restante)}`,
+        placeholder:  restante.toFixed(2),
+        defaultValue: restante.toFixed(2),
+        confirmLabel: 'Adicionar',
+        icon:         icones[forma] || 'fa-hand-holding-usd',
+        iconBg:       'bg-emerald-500/15',
+        iconColor:    'text-emerald-400',
+      });
+      if (!str) return;
+      const val = parseFloat(String(str).replace(',', '.')) || 0;
+      if (val <= 0) return;
+      _pagamentos.push({ forma, valor: Math.min(val, restante) });
+      _renderPgtos(totalFinal);
 
-    // Se completo, fecha
-    const novoPgtoTotal = _pagamentos.reduce((a, p) => a + p.valor, 0);
-    if (novoPgtoTotal >= totalFinal - 0.009) {
-      const formaFinal = _pagamentos.length > 1
-        ? _pagamentos.map(p => `${p.forma}(${Utils.formatCurrency(p.valor)})`).join(' + ')
-        : _pagamentos[0].forma;
-      confirmar(formaFinal);
-    }
+      // Se completo, fecha
+      const novoPgtoTotal = _pagamentos.reduce((a, p) => a + p.valor, 0);
+      if (novoPgtoTotal >= totalFinal - 0.009) {
+        const formaFinal = _pagamentos.length > 1
+          ? _pagamentos.map(p => `${p.forma}(${Utils.formatCurrency(p.valor)})`).join(' + ')
+          : _pagamentos[0].forma;
+        confirmar(formaFinal);
+      }
+  
+    } catch (err) { console.error('[adicionarPagamentoParcial]', err); }
   }
 
   function _renderPgtos(totalFinal) {
@@ -729,44 +768,50 @@ EventBus.on('sync:remote-applied',  () => ComandaRenderer.renderComandas());
 function renderComandas() { ComandaRenderer.renderComandas(); }
 
 async function cmdNova() {
-  const nome = await Dialog.prompt({
-    title:        'Nova Comanda',
-    message:      'Nome da mesa, grupo ou cliente',
-    placeholder:  'Ex: Mesa 1, Delivery João...',
-    confirmLabel: 'Criar',
-    icon:         'fa-receipt',
-    iconBg:       'bg-purple-500/15',
-    iconColor:    'text-purple-400',
-    maxLength:    50,
-  });
-  if (nome === null) return;
-  const c = ComandaService.nova(nome);
-  UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
-  ComandaRenderer.abrirDetalhe(c.id);
-}
+    try {
+    const nome = await Dialog.prompt({
+      title:        'Nova Comanda',
+      message:      'Nome da mesa, grupo ou cliente',
+      placeholder:  'Ex: Mesa 1, Delivery João...',
+      confirmLabel: 'Criar',
+      icon:         'fa-receipt',
+      iconBg:       'bg-purple-500/15',
+      iconColor:    'text-purple-400',
+      maxLength:    50,
+    });
+    if (nome === null) return;
+    const c = ComandaService.nova(nome);
+    UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
+    ComandaRenderer.abrirDetalhe(c.id);
+
+    } catch (err) { console.error('[cmdNova]', err); }
+  }
 
 function cmdAbrirDetalhe(id)  { ComandaRenderer.abrirDetalhe(id); }
 function cmdVoltarLista()     { ComandaRenderer.voltarLista(); }
 
 async function cmdRenomear() {
-  const id = ComandaRenderer.getAtivaId();
-  if (!id) return;
-  const c = ComandaService.getById(id);
-  if (!c) return;
-  const novo = await Dialog.prompt({
-    title:        'Renomear Comanda',
-    placeholder:  c.nome,
-    defaultValue: c.nome,
-    confirmLabel: 'Renomear',
-    icon:         'fa-pen',
-    iconBg:       'bg-blue-500/10',
-    iconColor:    'text-blue-400',
-    maxLength:    50,
-  });
-  if (!novo || !novo.trim()) return;
-  ComandaService.renomear(id, novo);
-  UIService.showToast('Renomeada', novo.trim());
-}
+    try {
+    const id = ComandaRenderer.getAtivaId();
+    if (!id) return;
+    const c = ComandaService.getById(id);
+    if (!c) return;
+    const novo = await Dialog.prompt({
+      title:        'Renomear Comanda',
+      placeholder:  c.nome,
+      defaultValue: c.nome,
+      confirmLabel: 'Renomear',
+      icon:         'fa-pen',
+      iconBg:       'bg-blue-500/10',
+      iconColor:    'text-blue-400',
+      maxLength:    50,
+    });
+    if (!novo || !novo.trim()) return;
+    ComandaService.renomear(id, novo);
+    UIService.showToast('Renomeada', novo.trim());
+
+    } catch (err) { console.error('[cmdRenomear]', err); }
+  }
 
 function cmdAddItem(prodId, packIdx) {
   const id = ComandaRenderer.getAtivaId();
@@ -797,19 +842,87 @@ function cmdAdicionarPagamentoParcial(forma) { ComandaFechamento.adicionarPagame
 function cmdAplicarDesconto() { ComandaFechamento.aplicarDesconto(); }
 
 async function cmdCancelarById(id) {
-  const c = ComandaService.getById(id);
-  if (!c) return;
-  const ok = await Dialog.danger({
-    title:        `Cancelar "${c.nome}"?`,
-    message:      c.itens.length > 0
-      ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)} — Esta ação não pode ser desfeita.`
-      : 'Esta ação não pode ser desfeita.',
-    icon:         'fa-times-circle',
-    confirmLabel: 'Cancelar Comanda',
-  });
-  if (!ok) return;
-  ComandaService.excluir(id);
-  UIService.showToast('Comanda cancelada', c.nome, 'warning');
-}
+    try {
+    const c = ComandaService.getById(id);
+    if (!c) return;
+    const ok = await Dialog.danger({
+      title:        `Cancelar "${c.nome}"?`,
+      message:      c.itens.length > 0
+        ? `${c.itens.length} item(ns) · ${Utils.formatCurrency(c.total || 0)} — Esta ação não pode ser desfeita.`
+        : 'Esta ação não pode ser desfeita.',
+      icon:         'fa-times-circle',
+      confirmLabel: 'Cancelar Comanda',
+    });
+    if (!ok) return;
+    ComandaService.excluir(id);
+    UIService.showToast('Comanda cancelada', c.nome, 'warning');
+
+    } catch (err) { console.error('[cmdCancelarById]', err); }
+  }
 
 function cmdBuscar(q) { ComandaRenderer.buscar(q); }
+
+/* ── Monitor ao vivo: atualiza temporizadores a cada 60s ──────── */
+setInterval(() => {
+  if (Utils.el('tab-comanda')?.classList.contains('active')) {
+    ComandaRenderer.renderComandas();
+    // Alerta Telegram/notif para comandas com >20min
+    const atrasadas = ComandaService.getAbertas().filter(c =>
+      Math.floor((Date.now() - (c.tsAberta || 0)) / 60000) >= 20
+    );
+    if (atrasadas.length > 0) {
+      EventBus.emit('notif:alerta-comanda', { qtd: atrasadas.length });
+    }
+  }
+}, 60_000);
+
+/* ── Alterar prioridade via Dialog.select ─────────────────────── */
+async function cmdAlterarPrioridade(id) {
+  try {
+    const c = ComandaService.getById(id);
+    if (!c) return;
+    const opcoes = ['ALTA', 'NORMAL', 'BAIXA'];
+    const labels = { ALTA: '🔴 Alta urgência', NORMAL: '🟡 Normal', BAIXA: '🟢 Baixa prioridade' };
+    const escolha = await Dialog.select({
+      title: `Prioridade — ${c.nome}`,
+      options: opcoes.map(o => ({ value: o, label: labels[o] })),
+      current: c.prioridade || 'NORMAL',
+      icon: 'fa-flag',
+      iconBg: 'bg-purple-500/15',
+      iconColor: 'text-purple-400',
+    }).catch(() => null);
+    if (!escolha) return;
+    Store.mutate(state => {
+      const cmd = state.comandas.find(x => String(x.id) === String(id));
+      if (cmd) cmd.prioridade = escolha;
+    }, true);
+    SyncService.persist();
+    ComandaRenderer.renderComandas();
+  } catch (err) { console.error('[cmdAlterarPrioridade]', err); }
+}
+
+/* ── Nova comanda com prioridade ─────────────────────────────── */
+async function cmdNovaComPrioridade() {
+  try {
+    const nome = await Dialog.prompt({
+      title: 'Nova Comanda', message: 'Nome da mesa, grupo ou cliente',
+      placeholder: 'Ex: Mesa 1, Delivery João...',
+      confirmLabel: 'Próximo', icon: 'fa-receipt',
+      iconBg: 'bg-purple-500/15', iconColor: 'text-purple-400', maxLength: 50,
+    });
+    if (nome === null) return;
+    const prio = await Dialog.select({
+      title: 'Prioridade da comanda',
+      options: [
+        { value: 'ALTA',   label: '🔴 Alta — atender primeiro' },
+        { value: 'NORMAL', label: '🟡 Normal' },
+        { value: 'BAIXA',  label: '🟢 Baixa' },
+      ],
+      current: 'NORMAL',
+      icon: 'fa-flag', iconBg: 'bg-purple-500/15', iconColor: 'text-purple-400',
+    }).catch(() => 'NORMAL');
+    const c = ComandaService.nova(nome, prio || 'NORMAL');
+    UIService.showToast('Comanda Aberta', `"${c.nome}" criada`);
+    ComandaRenderer.abrirDetalhe(c.id);
+  } catch (err) { console.error('[cmdNovaComPrioridade]', err); }
+}

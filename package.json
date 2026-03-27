@@ -1,6 +1,6 @@
 {
   "name": "ch-geladas-pdv",
-  "version": "6.0.0",
+  "version": "9.4.0",
   "description": "CH Geladas PDV — Sistema de ponto de venda",
   "private": true,
   "scripts": {

@@ -1,9 +1,9 @@
 {
-  "name": "CH Geladas PDV",
-  "short_name": "CH Geladas",
-  "description": "Sistema PDV para CH Geladas — vendas, delivery, comandas e financeiro",
-  "start_url": "/",
-  "scope": "/",
+  "name": "PDV App",
+  "short_name": "PDV",
+  "description": "Sistema PDV — vendas, delivery, comandas e financeiro",
+  "start_url": "/Ch-comercial/",
+  "scope": "/Ch-comercial/",
   "display": "standalone",
   "orientation": "portrait-primary",
   "theme_color": "#060810",
@@ -14,54 +14,14 @@
   "categories": ["business", "productivity"],
 
   "icons": [
-    {
-      "src": "/icon-72.png",
-      "sizes": "72x72",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-96.png",
-      "sizes": "96x96",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-128.png",
-      "sizes": "128x128",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-144.png",
-      "sizes": "144x144",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-152.png",
-      "sizes": "152x152",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-384.png",
-      "sizes": "384x384",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/Ch-comercial/icon-72.png",  "sizes": "72x72",   "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-96.png",  "sizes": "96x96",   "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-128.png", "sizes": "128x128", "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-144.png", "sizes": "144x144", "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-152.png", "sizes": "152x152", "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/Ch-comercial/icon-384.png", "sizes": "384x384", "type": "image/png", "purpose": "any" },
+    { "src": "/Ch-comercial/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ],
 
   "shortcuts": [
@@ -69,15 +29,15 @@
       "name": "PDV",
       "short_name": "Vender",
       "description": "Abrir tela de vendas",
-      "url": "/#pdv",
-      "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
+      "url": "/Ch-comercial/#pdv",
+      "icons": [{ "src": "/Ch-comercial/icon-96.png", "sizes": "96x96" }]
     },
     {
       "name": "Delivery",
       "short_name": "Delivery",
       "description": "Gerenciar pedidos delivery",
-      "url": "/#delivery",
-      "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
+      "url": "/Ch-comercial/#delivery",
+      "icons": [{ "src": "/Ch-comercial/icon-96.png", "sizes": "96x96" }]
     }
   ],
 

@@ -17,8 +17,25 @@
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════════════════ */
+
+/** Lê LOJA_CONFIG antes do resto do app (chaves isoladas por projeto) */
+function _lojaConfigEarly() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+const _lojaEarly = _lojaConfigEarly();
+
+function _deriveStorageKey(suffix, fallback) {
+  const pid = _lojaEarly.firebase?.projectId;
+  if (pid && pid !== 'ch-geladas') {
+    const slug = pid.toUpperCase().replace(/-/g, '_').replace(/[^A-Z0-9_]/g, '');
+    return `PDV_${suffix}_${slug}`;
+  }
+  return fallback;
+}
+
 const CONSTANTS = Object.freeze({
-  STORAGE_KEY: 'CH_GELADAS_DB_ENTERPRISE',
+  STORAGE_KEY: _deriveStorageKey('DB', 'CH_GELADAS_DB_ENTERPRISE'),
   SYNC_LOCK_DURATION_MS: 5_000,  // reduzido de 15s→5s: protege saves locais sem bloquear sync simultâneo
   TOAST_DURATION_MS: 2_800,
   SYNC_FALLBACK_MS: 5_000,
@@ -31,6 +48,15 @@ const CONSTANTS = Object.freeze({
     PDV:   'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3'  // 123
   }),
   LOW_STOCK_THRESHOLD: 3,
+  // FIFO — limites para evitar estouro do localStorage em uso prolongado
+  MAX_VENDAS:           5_000,
+  MAX_INVENTARIO:       2_000,
+  MAX_PONTO:            1_000,
+  MAX_AUDIT_ESTOQUE:    3_000,
+  MAX_MOVIMENTACOES:    1_000,
+  MAX_AUDIT_LOG:        2_000,   // FIX-01: auditLog crescia sem limite → crash localStorage
+  MAX_DELIVERY_PEDIDOS: 2_000,   // FIX-02: pedidos finalizados acumulavam indefinidamente
+  MAX_CAIXA:              500,   // FIX-03: registros de abertura/fechamento sem teto
 });
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -278,6 +304,9 @@ const Store = (() => {
     comandas:   [],
     movimentacoes: [],   // entradas e saídas manuais
     auditLog:   [],      // log imutável de auditoria (append-only)
+    auditEstoque: [],    // log detalhado de ajustes manuais de estoque
+    fiado:      { clientes: [] },  // sistema de vendas a prazo
+    backupHistory: [],   // pontos de restauração automáticos
     investimento: 0,
     config:     { whatsapp: '' },
     delivery:   {
@@ -350,21 +379,45 @@ const Store = (() => {
     if (d.config.pinHashAdmin === undefined) d.config.pinHashAdmin = '';
     if (d.config.pinHashPdv   === undefined) d.config.pinHashPdv   = '';
     if (d.config.anthropicApiKey === undefined) d.config.anthropicApiKey = '';
+    if (d.config.sessionTimeoutMinutes === undefined) d.config.sessionTimeoutMinutes = 30;
     if (!Array.isArray(d.estoque))    d.estoque    = [];
     if (!Array.isArray(d.vendas))     d.vendas     = [];
     if (!Array.isArray(d.ponto))      d.ponto      = [];
     if (!Array.isArray(d.inventario)) d.inventario = [];
     if (!Array.isArray(d.auditLog))       d.auditLog       = [];
     if (!Array.isArray(d.movimentacoes)) d.movimentacoes = [];
+    if (!Array.isArray(d.auditEstoque)) d.auditEstoque = [];
+    if (d.auditEstoque.length > CONSTANTS.MAX_AUDIT_ESTOQUE) d.auditEstoque.splice(CONSTANTS.MAX_AUDIT_ESTOQUE);
+    if (d.movimentacoes.length > CONSTANTS.MAX_MOVIMENTACOES) d.movimentacoes.splice(CONSTANTS.MAX_MOVIMENTACOES);
+    if (!d.fiado)                         d.fiado = { clientes: [] };
+    if (!Array.isArray(d.fiado.clientes)) d.fiado.clientes = [];
+    if (!Array.isArray(d.backupHistory))  d.backupHistory = [];
+    if (d.backupHistory.length > 10)      d.backupHistory.splice(10); // máx 10 pontos
     if (!Array.isArray(d.caixa))      d.caixa      = [];
     if (!Array.isArray(d.comandas))   d.comandas   = [];
     if (typeof d.investimento !== 'number') d.investimento = 0;
+
+    // FIFO — remove registros mais antigos para não estourar localStorage
+    if (d.vendas.length     > CONSTANTS.MAX_VENDAS)     d.vendas.splice(CONSTANTS.MAX_VENDAS);
+    if (d.inventario.length > CONSTANTS.MAX_INVENTARIO) d.inventario.splice(CONSTANTS.MAX_INVENTARIO);
+    if (d.ponto.length      > CONSTANTS.MAX_PONTO)      d.ponto.splice(CONSTANTS.MAX_PONTO);
+    // FIX-01: auditLog append-only crescia sem limite — mantém os 2000 mais recentes
+    if (d.auditLog.length   > CONSTANTS.MAX_AUDIT_LOG)  d.auditLog.splice(CONSTANTS.MAX_AUDIT_LOG);
+    // FIX-03: registros de abertura/fechamento de caixa sem teto
+    if (Array.isArray(d.caixa) && d.caixa.length > CONSTANTS.MAX_CAIXA) d.caixa.splice(CONSTANTS.MAX_CAIXA);
     if (!d.delivery) d.delivery = { pedidos: [], clientes: [], entregadores: [], zonas: [] };
     const dlv = d.delivery;
     if (!Array.isArray(dlv.pedidos))      dlv.pedidos      = [];
     if (!Array.isArray(dlv.clientes))     dlv.clientes     = [];
     if (!Array.isArray(dlv.entregadores)) dlv.entregadores = [];
     if (!Array.isArray(dlv.zonas))        dlv.zonas        = [];
+    // FIX-02: FIFO para pedidos — preserva ativos, trunca apenas os finalizados mais antigos
+    if (dlv.pedidos.length > CONSTANTS.MAX_DELIVERY_PEDIDOS) {
+      const ativos     = dlv.pedidos.filter(p => p.status !== 'ENTREGUE' && p.status !== 'CANCELADO');
+      const finalizados = dlv.pedidos.filter(p => p.status === 'ENTREGUE' || p.status === 'CANCELADO');
+      const limite     = Math.max(0, CONSTANTS.MAX_DELIVERY_PEDIDOS - ativos.length);
+      dlv.pedidos = [...ativos, ...finalizados.slice(0, limite)];
+    }
   }
 
   /**
@@ -393,6 +446,10 @@ const Store = (() => {
   /** Selectors — acesso tipado e seguro ao estado */
   const Selectors = Object.freeze({
     getMovimentacoes:  () => _state.movimentacoes,
+    getAuditEstoque:   () => _state.auditEstoque,
+    getFiado:          () => _state.fiado,
+    getFiadoClientes:  () => _state.fiado?.clientes || [],
+    getFiadoClienteById: id => (_state.fiado?.clientes || []).find(c => String(c.id) === String(id)) || null,
     getEstoque:        () => _state.estoque,
     getVendas:         () => _state.vendas,
     getPonto:          () => _state.ponto,
@@ -858,6 +915,10 @@ const CartService = (() => {
   let _desconto   = 0;
   /** Pagamentos múltiplos: [{forma, valor}] */
   let _pagamentos = [];
+  /** Proteção contra checkout duplo */
+  let _checkoutLock = false;
+  /** Debounce por produto: evita duplo-toque acidental (<400ms) */
+  const _lastAddTs = new Map();
 
   /* ── Getters ─────────────────────────────────────────────── */
   const getItems     = () => [..._items];
@@ -908,6 +969,12 @@ const CartService = (() => {
    * @param {HTMLElement|null} btnEl — botão que gerou a ação (para animação)
    */
   function addItem(prodId, packIdx, btnEl = null) {
+    // Debounce: bloqueia duplo-toque no mesmo produto (<400ms)
+    const tsKey = `${prodId}:${packIdx}`;
+    const now   = Date.now();
+    if (now - (_lastAddTs.get(tsKey) || 0) < 400) return;
+    _lastAddTs.set(tsKey, now);
+
     const product = Store.Selectors.getProdutoById(prodId);
     if (!product) return;
 
@@ -995,7 +1062,8 @@ const CartService = (() => {
    * @returns {object|null} venda registrada ou null em caso de erro
    */
   function checkout() {
-    if (isEmpty()) return null;
+    if (isEmpty() || _checkoutLock) return null;
+    _checkoutLock = true;
 
     const now    = new Date();
     const today  = Utils.todayISO();
@@ -1052,6 +1120,7 @@ const CartService = (() => {
     const vendaSnapshot = { ...venda };
     clear();
     EventBus.emit('cart:checkout', vendaSnapshot);
+    setTimeout(() => { _checkoutLock = false; }, 1_500);
     return vendaSnapshot;
   }
 
@@ -1086,7 +1155,8 @@ const RenderService = (() => {
 
   /* ── Catálogo ─────────────────────────────────────────────── */
   /* ── Filtro por categoria ─────────────────────────────────── */
-  let _activeCat = null;
+  let _activeCat  = null;
+  let _activeMode = 'todos';
 
   function setCatFilter(cat) {
     _activeCat = (_activeCat === cat) ? null : cat;
@@ -1094,19 +1164,39 @@ const RenderService = (() => {
     renderCatalogo();
   }
 
+  function setCatalogMode(mode) {
+    _activeMode = (_activeMode === mode) ? 'todos' : mode;
+    renderCatFilter();
+    renderCatalogo();
+  }
+
   function renderCatFilter() {
-    const row = Utils.el('catFilterRow');
+    const row  = Utils.el('catFilterRow');
     if (!row) return;
     const cats = Store.Selectors.getConfig()?.categorias || [];
-    if (cats.length === 0) { row.classList.add('hidden'); return; }
     row.classList.remove('hidden');
-    const pill = (label, val) => {
-      const active = _activeCat === val;
-      return `<button onclick="setCatFilter(${val === null ? 'null' : `'${val.replace(/'/g, "\\'")}'`})" ` +
-        `class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border ` +
-        `${active ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-blue-500/40'}">${label}</button>`;
+
+    const modePill = (label, mode, icon) => {
+      const a = _activeMode === mode;
+      return '<button onclick="setCatalogMode(\'' + mode + '\')" class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border flex items-center gap-1 ' +
+        (a ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-blue-500/40') +
+        '"><i class=\"fas ' + icon + ' text-[8px]\"></i>' + label + '</button>';
     };
-    row.innerHTML = pill('Todos', null) + cats.map(c => pill(c, c)).join('');
+    const catPill = (label, val) => {
+      const a = _activeCat === val;
+      const onclick = val === null ? 'setCatFilter(null)' : "setCatFilter('" + val.replace(/'/g, "\\'") + "')";
+      return '<button onclick="' + onclick + '" class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border ' +
+        (a ? 'bg-violet-600 text-white border-violet-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-violet-500/40') +
+        '">' + label + '</button>';
+    };
+
+    const modes = modePill('Disponíveis', 'disponiveis', 'fa-check-circle') +
+                  modePill('Mais Vendidos', 'topsellers', 'fa-fire');
+    const catPills = cats.length > 0
+      ? '<span class="w-px h-4 bg-white/10 self-center flex-shrink-0"></span>' +
+        catPill('Todos', null) + cats.map(c => catPill(c, c)).join('')
+      : '';
+    row.innerHTML = modes + catPills;
   }
 
   function renderCatalogo() {
@@ -1127,11 +1217,25 @@ const RenderService = (() => {
     }
 
     const busca   = (Utils.el('searchProd')?.value || '').toLowerCase();
-    const estoque = Store.Selectors.getEstoque();
+    let estoque = Store.Selectors.getEstoque();
+
+    // Modo: mais vendidos — ordena por quantidade vendida
+    if (_activeMode === 'topsellers') {
+      const mapa = {};
+      Store.Selectors.getVendas().forEach(v => {
+        (v.itens || []).forEach(it => {
+          const k = String(it.prodId || '');
+          mapa[k] = (mapa[k] || 0) + (it.desconto || 1);
+        });
+      });
+      estoque = [...estoque].sort((a, b) => (mapa[String(b.id)] || 0) - (mapa[String(a.id)] || 0));
+    }
+
     const filtered = estoque.filter(p => {
       const buscaOk = !busca || p.nome.toLowerCase().includes(busca);
       const catOk   = !_activeCat || (p.categoria || '') === _activeCat;
-      return buscaOk && catOk;
+      const modeOk  = _activeMode !== 'disponiveis' || p.qtdUn > 0;
+      return buscaOk && catOk && modeOk;
     });
 
     if (filtered.length === 0) {
@@ -1173,6 +1277,9 @@ const RenderService = (() => {
                      :              `${p.qtdUn} und`;
     const margem = p.custoUn > 0
       ? `<span class="badge b-green text-[7px]">${((1 - p.custoUn / p.precoUn) * 100).toFixed(0)}%</span>` : '';
+    const catBadge = p.categoria
+      ? `<span class="inline-block px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 text-[6px] font-black uppercase tracking-wide leading-none">${_escapeHtml(p.categoria)}</span>`
+      : '';
 
     // Packs: só o primeiro pack em mobile (para não encher demais)
     const packsHtml = (p.packs || []).slice(0, 2).map((pk, i) => {
@@ -1191,6 +1298,7 @@ const RenderService = (() => {
         <div class="flex items-start justify-between gap-1 min-w-0">
           <div class="min-w-0 flex-1">
             <h3 class="text-[10px] font-black text-slate-200 leading-tight" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${_escapeHtml(p.nome)}</h3>
+            ${catBadge}
           </div>
           ${margem}
         </div>
@@ -1245,21 +1353,28 @@ const RenderService = (() => {
     fillContainer(Utils.el('carrinhoLista'), 'btnLimpar');
     _setText('cartTotal', fmtTotal);
     if (CartService.getDesconto() > 0) {
-      _setText('cartSubtotal', `Subtotal: ${Utils.formatCurrency(CartService.getSubtotal())}`);
-      _setText('cartDesconto', `Desconto: -${Utils.formatCurrency(CartService.getDesconto())}`);
+      _setText('cartSubtotalDesk', `Sub: ${Utils.formatCurrency(CartService.getSubtotal())}`);
     } else {
-      _setText('cartSubtotal', '');
-      _setText('cartDesconto', '');
+      _setText('cartSubtotalDesk', '');
     }
+    _setText('cartSubtotal', '');
+    _setText('cartDesconto', '');
     _setText('cartCount', count > 0 ? `${count} ${count === 1 ? 'item' : 'itens'}` : '');
     const badge = Utils.el('cartBadge');
     if (badge) { badge.textContent = count; badge.classList.toggle('hidden', count === 0); }
+
+    // Quick-pay buttons
+    const qp    = Utils.el('quickPayBtns');
+    const qpMob = Utils.el('quickPayBtnsMob');
+    if (qp)    qp.classList.toggle('hidden', count === 0);
+    if (qpMob) qpMob.classList.toggle('hidden', count === 0);
+
     const btn = Utils.el('btnFinalizar');
     if (btn) {
       btn.disabled = count === 0;
       btn.className = count > 0
-        ? 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/25 hover:bg-blue-500'
-        : 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
+        ? 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-700/60 text-slate-300 border border-white/8 hover:bg-slate-700'
+        : 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
     }
 
     // Mobile drawer
@@ -1272,8 +1387,8 @@ const RenderService = (() => {
     if (btnMob) {
       btnMob.disabled = count === 0;
       btnMob.className = count > 0
-        ? 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/25 hover:bg-blue-500'
-        : 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
+        ? 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-700/60 text-slate-300 border border-white/8'
+        : 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
     }
 
     // Float button
@@ -1335,7 +1450,107 @@ const RenderService = (() => {
       .replace(/'/g, '&#39;');
   }
 
-  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, renderCatFilter, setCatFilter, _escapeHtml, get _activeCat() { return _activeCat; } });
+  /* ── Modo Turbo — top-sellers + atalhos por categoria ────── */
+  const _EMOJI_CAT = {
+    'cerveja': '🍺', 'beer': '🍺', 'lata': '🍺', 'litrão': '🍶', 'litrao': '🍶',
+    'whisky': '🥃', 'dose': '🥃', 'destilado': '🥃', 'vodka': '🥃', 'rum': '🥃',
+    'refrigerante': '🥤', 'refri': '🥤', 'suco': '🥤', 'energético': '⚡',
+    'água': '💧', 'agua': '💧', 'gelo': '🧊', 'copo': '🥂', 'vinho': '🍷',
+  };
+
+  const _CATEGORY_SHORTCUTS = [
+    { label: 'Cerveja Lata', keys: ['cerveja lata', 'lata'], emoji: '🍺' },
+    { label: 'Litrão',       keys: ['litrão', 'litrao', '1l', '1 l'], emoji: '🍶' },
+    { label: 'Whisky',       keys: ['whisky', 'whiskey', 'dose'],      emoji: '🥃' },
+    { label: 'Gelo',         keys: ['gelo'],                            emoji: '🧊' },
+    { label: 'Refrigerante', keys: ['refrigerante', 'refri'],           emoji: '🥤' },
+    { label: 'Água',         keys: ['água', 'agua'],                    emoji: '💧' },
+  ];
+
+  function _emojiFit(nome) {
+    const n = (nome || '').toLowerCase();
+    for (const [k, e] of Object.entries(_EMOJI_CAT)) {
+      if (n.includes(k)) return e;
+    }
+    return '🍶';
+  }
+
+  function renderTurboMode() {
+    const cont = Utils.el('turboGrid');
+    if (!cont) return;
+
+    const estoque = Store.Selectors.getEstoque();
+
+    // Agrega quantidades por produto a partir do histórico de vendas
+    const mapa = {};
+    Store.Selectors.getVendas().forEach(v => {
+      (v.itens || []).forEach(it => {
+        const key = String(it.prodId || '');
+        if (!key) return;
+        if (!mapa[key]) mapa[key] = { prodId: key, nome: it.nome || '', qtd: 0 };
+        mapa[key].qtd += (it.desconto || 1);
+      });
+    });
+
+    const top = Object.values(mapa).sort((a, b) => b.qtd - a.qtd).slice(0, 8);
+
+    // Atalhos de categoria fixos — encontra o primeiro produto que bate
+    const shortcuts = _CATEGORY_SHORTCUTS.map(sc => {
+      const prod = estoque.find(p => {
+        const n = (p.nome || '').toLowerCase();
+        return sc.keys.some(k => n.includes(k));
+      });
+      return prod ? { ...sc, prod } : null;
+    }).filter(Boolean);
+
+    if (!top.length && !shortcuts.length) {
+      cont.innerHTML = `<p class="col-span-4 text-center text-slate-700 text-[9px] font-black uppercase py-3">Realize algumas vendas para popular</p>`;
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+
+    // Primeiro: atalhos de categoria
+    shortcuts.forEach(sc => {
+      const p = sc.prod;
+      const esgotado = p.qtdUn <= 0;
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <button onclick="addCart('${p.id}', 0, this)" ${esgotado ? 'disabled' : ''}
+          class="turbo-btn ${esgotado ? 'esgotado' : ''}" title="${_escapeHtml(p.nome)}">
+          <span class="text-xl leading-none">${sc.emoji}</span>
+          <p class="text-[7px] font-black text-amber-300 uppercase leading-none">${_escapeHtml(sc.label)}</p>
+          <p class="text-[9px] font-black text-white">R$ ${p.precoUn.toFixed(2)}</p>
+          <p class="text-[7px] text-slate-600 font-bold">${esgotado ? 'Esgotado' : p.qtdUn + ' un'}</p>
+        </button>`;
+      frag.appendChild(div.firstElementChild);
+    });
+
+    // Depois: top-sellers que não estão nos shortcuts
+    const shortcutIds = new Set(shortcuts.map(s => String(s.prod.id)));
+    top.filter(t => !shortcutIds.has(String(t.prodId))).slice(0, Math.max(0, 8 - shortcuts.length)).forEach(t => {
+      const prod = Store.Selectors.getProdutoById(t.prodId);
+      if (!prod) return;
+      const esgotado = prod.qtdUn <= 0;
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <button onclick="addCart('${prod.id}', 0, this)" ${esgotado ? 'disabled' : ''}
+          class="turbo-btn ${esgotado ? 'esgotado' : ''}">
+          <span class="text-xl leading-none">${_emojiFit(prod.nome)}</span>
+          <p class="text-[8px] font-black text-white leading-tight w-full"
+            style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
+            ${_escapeHtml(prod.nome)}</p>
+          <p class="text-[9px] font-black text-blue-400">R$ ${prod.precoUn.toFixed(2)}</p>
+          <p class="text-[7px] text-slate-600 font-bold">${esgotado ? 'Esgotado' : prod.qtdUn + ' un'}</p>
+        </button>`;
+      frag.appendChild(div.firstElementChild);
+    });
+
+    cont.innerHTML = '';
+    cont.appendChild(frag);
+  }
+
+  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, renderCatFilter, setCatFilter, setCatalogMode, renderTurboMode, _escapeHtml, get _activeCat() { return _activeCat; }, get _activeMode() { return _activeMode; } });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1346,13 +1561,14 @@ const TabManager = (() => {
   const _renderMap = {
     vendas:     () => { RenderService.renderCatalogo(); },
     estoque:    () => { if (typeof renderEstoque    === 'function') renderEstoque();    },
-    financeiro: () => { if (typeof renderFinanceiro === 'function') renderFinanceiro(); },
+    financeiro: () => { if (typeof renderFinanceiro === 'function') renderFinanceiro(); if (typeof CaixaTurnoService !== 'undefined') CaixaTurnoService.renderTurnoAtual(); },
     fluxo:      () => { if (typeof renderFluxo      === 'function') renderFluxo();      },
     ponto:      () => { if (typeof renderPonto      === 'function') renderPonto();      },
     dados:      () => { if (typeof renderDados      === 'function') renderDados();      },
     inventario: () => { if (typeof renderInventario === 'function') renderInventario(); },
     ia:         () => { if (typeof renderIA         === 'function') renderIA();         },
     comanda:    () => { if (typeof renderComandas   === 'function') renderComandas();   },
+    fiado:      () => { if (typeof renderFiado      === 'function') renderFiado();      },
     delivery:   () => {
       if (typeof renderDelivery          === 'function') renderDelivery();
       if (typeof populateMpProdutos      === 'function') populateMpProdutos();
@@ -1513,6 +1729,18 @@ const VendaService = (() => {
    * @param {string} forma
    */
   function confirmarPagamento(forma) {
+    if (forma === 'Fiado') {
+      UIService.closeModal('modalPagamento');
+      const total = CartService.getTotal();
+      if (typeof FiadoService !== 'undefined') {
+        FiadoService.abrirSelecaoCliente(total);
+      } else {
+        // Fallback sem rastreio de cliente
+        CartService.setFormaPgto('Fiado');
+        finalizarVenda();
+      }
+      return;
+    }
     CartService.setFormaPgto(forma);
     UIService.closeModal('modalPagamento');
     finalizarVenda();
@@ -1585,20 +1813,62 @@ const VendaService = (() => {
   function finalizarVenda() {
     const btn    = Utils.el('btnFinalizar');
     const btnMob = Utils.el('btnFinalizarMob');
-    // FIX: verificar ambos os botões (desktop + mobile) para evitar duplo-toque
     if ((btn?.disabled && btnMob?.disabled) || CartService.isEmpty()) return;
     if (btn)    btn.disabled    = true;
     if (btnMob) btnMob.disabled = true;
 
-    // Áudio de venda
     try { Utils.el('audioVenda')?.play(); } catch (_) {}
 
     const venda = CartService.checkout();
     if (!venda) { if (btn) btn.disabled = false; return; }
 
     _lastSale = venda;
+    _populateRecibo(venda);
     EventBus.emit('venda:concluida', venda);
     UIService.openModal('modalVenda');
+  }
+
+  /** Preenche o recibo visual no modal */
+  function _populateRecibo(venda) {
+    const cfg      = Store.Selectors.getConfig();
+    const nomeLoja = cfg.nome || 'PDV App';
+    const _s       = (id, v) => { const el = Utils.el(id); if (el) el.textContent = v ?? ''; };
+    const _t       = v => Utils.formatCurrency(v);
+
+    _s('recNomeLoja', nomeLoja);
+    _s('recId',       `#${String(venda.id).slice(-6)}`);
+    _s('recTotal',    _t(venda.total));
+    _s('recDataHora', `${venda.data || ''}${venda.hora ? ' · ' + venda.hora : ''}`);
+
+    // Itens
+    const itensEl = Utils.el('recItens');
+    if (itensEl) {
+      itensEl.innerHTML = (venda.itens || []).map(i => `
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-[8px] font-black text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded flex-shrink-0">${i.label === 'UNID' ? '1x' : i.label}</span>
+            <span class="text-[10px] font-bold text-slate-300 truncate">${i.nome || ''}</span>
+          </div>
+          <span class="text-[10px] font-black text-white flex-shrink-0 ml-2">${_t(i.preco)}</span>
+        </div>`).join('');
+    }
+
+    // Desconto
+    const hasDesc = (venda.desconto || 0) > 0;
+    const descRow  = Utils.el('recDescontoRow');
+    const descValRow = Utils.el('recDescontoValRow');
+    if (descRow)    descRow.classList.toggle('hidden', !hasDesc);
+    if (descValRow) descValRow.classList.toggle('hidden', !hasDesc);
+    if (hasDesc) {
+      _s('recSubtotal', _t(venda.subtotal || venda.total));
+      _s('recDesconto', `-${_t(venda.desconto)}`);
+    }
+
+    // Pagamento
+    const pgtoStr = (venda.pagamentos && venda.pagamentos.length > 1)
+      ? venda.pagamentos.map(p => `${p.forma}: ${_t(p.valor)}`).join(' + ')
+      : (venda.formaPgto || '');
+    _s('recPgto', pgtoStr ? `💳 ${pgtoStr}` : '');
   }
 
   function fecharModalVenda() {
@@ -1664,6 +1934,162 @@ const VendaService = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
+   BACKUP MANAGER — Backups locais automáticos + restauração
+═══════════════════════════════════════════════════════════════════ */
+const BackupManager = (() => {
+  const BACKUP_KEY    = _deriveStorageKey('BACKUPS', 'CH_GELADAS_BACKUPS');
+  const MAX_BACKUPS   = 7;
+  let   _scheduledTimer = null;
+
+  function _getBackups()       { return Utils.safeJsonParse(localStorage.getItem(BACKUP_KEY), []); }
+  function _saveBackups(arr)   { try { localStorage.setItem(BACKUP_KEY, JSON.stringify(arr)); } catch (_) {} }
+
+  /** Cria um ponto de restauração */
+  function criarBackup(motivo = 'manual') {
+    const estado = Store.getState();
+    const entry  = {
+      id:        Utils.generateId(),
+      ts:        new Date().toISOString(),
+      data:      Utils.todayISO(),
+      hora:      Utils.now(),
+      motivo,
+      dados:     JSON.stringify(estado),
+      tamanho:   Math.round(JSON.stringify(estado).length / 1024),
+    };
+    const backups = [entry, ..._getBackups()].slice(0, MAX_BACKUPS);
+    _saveBackups(backups);
+    if (motivo !== 'automatico_diario') UIService.showToast('Backup criado', `${entry.tamanho}KB salvo`);
+    return entry;
+  }
+
+  /** Lista backups sem os dados (leve) */
+  function listarBackups() { return _getBackups().map(b => ({ ...b, dados: undefined })); }
+
+  /** Restaura um backup pelo ID */
+  function restaurarBackup(id) {
+    const b = _getBackups().find(x => x.id === id);
+    if (!b) return false;
+    try {
+      const parsed = Utils.safeJsonParse(b.dados, null);
+      if (!parsed) return false;
+      Store.setState({ ...parsed, _updatedAt: Date.now() }, false);
+      SyncService.persistNow();
+      UIService.showToast('Backup restaurado', b.data + ' ' + b.hora);
+      return true;
+    } catch (e) {
+      UIService.showToast('Erro', 'Falha ao restaurar', 'error');
+      return false;
+    }
+  }
+
+  /** Download do estado atual como JSON */
+  function downloadBackup() {
+    const json = JSON.stringify(Store.getState(), null, 2);
+    Utils.downloadBlob(json, 'application/json', `CH_Geladas_Backup_${Utils.todayISO()}.json`);
+    UIService.showToast('Download', 'Backup baixado');
+  }
+
+  /** Agenda backup automático diário às 02:00 */
+  function _agendarProximo() {
+    const agora = new Date();
+    const alvo  = new Date();
+    alvo.setHours(2, 0, 0, 0);
+    if (alvo <= agora) alvo.setDate(alvo.getDate() + 1);
+    const delay = alvo.getTime() - agora.getTime();
+    clearTimeout(_scheduledTimer);
+    _scheduledTimer = setTimeout(() => { criarBackup('automatico_diario'); _agendarProximo(); }, delay);
+  }
+
+  function init() {
+    _agendarProximo();
+    // Backup catching-up: se passou das 2h e ainda não tem backup de hoje
+    EventBus.on('auth:login', () => {
+      const hoje = Utils.todayISO();
+      const temHoje = _getBackups().some(b => b.ts.startsWith(hoje) && b.motivo === 'automatico_diario');
+      if (!temHoje && new Date().getHours() >= 2) criarBackup('automatico_diario');
+    });
+  }
+
+  return Object.freeze({ criarBackup, listarBackups, restaurarBackup, downloadBackup, init });
+})();
+
+/* ═══════════════════════════════════════════════════════════════════
+   SESSION MANAGER — Timeout automático de sessão
+═══════════════════════════════════════════════════════════════════ */
+const SessionManager = (() => {
+  const DEFAULT_TIMEOUT_MIN  = 30;
+  const WARNING_BEFORE_MIN   = 5;
+  let _timeoutTimer   = null;
+  let _warningTimer   = null;
+  let _warnShown      = false;
+
+  function _getTimeoutMs() {
+    const cfg = Store.Selectors.getConfig();
+    return ((cfg.sessionTimeoutMinutes ?? DEFAULT_TIMEOUT_MIN) * 60_000);
+  }
+
+  /** Renova o timer de sessão (chamado em qualquer atividade) */
+  function renovar() {
+    if (!AuthService.isLogged()) return;
+    _warnShown = false;
+    _esconderAviso();
+    clearTimeout(_timeoutTimer);
+    clearTimeout(_warningTimer);
+
+    const total   = _getTimeoutMs();
+    const warnAt  = total - WARNING_BEFORE_MIN * 60_000;
+
+    if (warnAt > 0) {
+      _warningTimer = setTimeout(() => {
+        if (!_warnShown) { _warnShown = true; _mostrarAviso(); }
+      }, warnAt);
+    }
+
+    _timeoutTimer = setTimeout(() => {
+      if (AuthService.isLogged()) {
+        AuthService.logout();
+        UIService.showToast('Sessão expirada', 'Entre novamente', 'warning');
+        EventBus.emit('session:expired');
+      }
+    }, total);
+  }
+
+  function _mostrarAviso() {
+    let el = Utils.el('sessionWarning');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'sessionWarning';
+      el.style.cssText = 'position:fixed;top:env(safe-area-inset-top,0px);left:50%;transform:translateX(-50%);' +
+        'background:#fef3c7;border:1px solid #f59e0b;color:#92400e;font-size:12px;padding:8px 16px;' +
+        'border-radius:12px;z-index:9999;white-space:nowrap;font-weight:700;cursor:pointer;';
+      el.innerHTML = '⚠️ Sessão expira em 5 min — <strong>Toque para continuar</strong>';
+      el.addEventListener('click', () => { renovar(); UIService.showToast('Sessão renovada', ''); });
+      document.body.appendChild(el);
+    }
+    el.style.display = 'block';
+    EventBus.emit('session:timeout-warning', { minutosRestantes: WARNING_BEFORE_MIN });
+  }
+
+  function _esconderAviso() {
+    const el = Utils.el('sessionWarning');
+    if (el) el.style.display = 'none';
+  }
+
+  /** Inicia rastreamento de atividade do usuário */
+  function init() {
+    ['click','keydown','touchstart','mousemove','scroll'].forEach(ev => {
+      document.addEventListener(ev, () => { if (AuthService.isLogged()) renovar(); }, { passive: true });
+    });
+    // Renova ao voltar à aba
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && AuthService.isLogged()) renovar();
+    });
+  }
+
+  return Object.freeze({ renovar, init });
+})();
+
+/* ═══════════════════════════════════════════════════════════════════
    BOOTSTRAP — Inicialização da aplicação
 ═══════════════════════════════════════════════════════════════════ */
 const Bootstrap = (() => {
@@ -1672,6 +2098,10 @@ const Bootstrap = (() => {
    */
   function init() {
     UIService.hideLoader();
+
+    // Aplica identidade visual da loja (tema, logo) o mais cedo possível
+    _initLojaIdentidade();
+
     if (!AuthService.isLogged()) {
       UIService.showLock();
     }
@@ -1703,6 +2133,7 @@ const Bootstrap = (() => {
   function onLoginSuccess(role) {
     UIService.showApp();
     UIService.showToast('Sessão Iniciada', role === 'admin' ? 'Acesso Total' : 'Modo Colaborador');
+    SessionManager.renovar(); // inicia timer de sessão
 
     // Avisa se admin está a usar o PIN padrão fraco
     if (role === 'admin') {
@@ -1710,6 +2141,21 @@ const Bootstrap = (() => {
         UIService.showToast('Segurança', 'PIN padrão detectado — considere alterar nas configurações', 'warning');
       }, 2500);
     }
+
+    // Alerta de caixa fechado — obrigatório para PDV
+    setTimeout(() => {
+      if (!Store.Selectors.isCaixaOpen()) {
+        const banner = Utils.el('caixaFechadoBanner');
+        if (banner) {
+          banner.classList.remove('hidden');
+          banner.classList.add('flex');
+        }
+        if (role !== 'admin') {
+          UIService.showToast('Atenção', 'Abra o caixa antes de vender', 'warning');
+        }
+      }
+    }, 600);
+
     UIService.startClock();
     UIService.refreshAlerts();
 
@@ -1717,17 +2163,24 @@ const Bootstrap = (() => {
     // Não recarregamos aqui para evitar sobrescrever um sync remoto que possa
     // ter ocorrido entre init() e o momento do login.
 
+    // Aplica identidade visual (pode ter sido sobrescrita antes do login)
+    _initLojaIdentidade();
+
     // Renderiza módulos iniciais
     const _nomeCfg = Store.Selectors.getConfig()?.nome;
     if (_nomeCfg) document.title = _nomeCfg;
     RenderService.renderCatFilter();
     RenderService.renderCatalogo();
+    RenderService.renderTurboMode();
     RenderService.renderCarrinho();
     if (typeof renderEstoque    === 'function') renderEstoque();
     if (typeof renderPonto      === 'function') renderPonto();
-    if (typeof renderFinanceiro === 'function') renderFinanceiro(); // FIX: era o único módulo não pré-renderizado
+    if (typeof renderFinanceiro === 'function') renderFinanceiro();
+    if (typeof CaixaTurnoService !== 'undefined') CaixaTurnoService.renderTurnoAtual();
     if (typeof renderDelivery   === 'function') renderDelivery();
     if (typeof renderComandas   === 'function') renderComandas();
+    if (typeof renderFluxo      === 'function') renderFluxo();
+    if (typeof renderFiado      === 'function') renderFiado();
     if (typeof populateMpZonas       === 'function') populateMpZonas();
     if (typeof populateMpEntregadores === 'function') populateMpEntregadores();
 
@@ -1742,6 +2195,10 @@ const Bootstrap = (() => {
     EventBus.on('sync:remote-applied', () => {
       RenderService.renderCatalogo();
       RenderService.updateStats();
+      // Fluxo e IA não têm módulo próprio com listener — actualiza se ativo
+      const _tab = id => !!Utils.el(`tab-${id}`)?.classList.contains('active');
+      if (_tab('fluxo')  && typeof renderFluxo === 'function') renderFluxo();
+      if (_tab('ia')     && typeof renderIA    === 'function') renderIA();
     });
 
     // FIX: auth:logout → trava a UI imediatamente (lock screen + limpa classes de role)
@@ -1763,7 +2220,11 @@ const Bootstrap = (() => {
     });
 
     // Atualiza aviso do PDV quando caixa ou ponto muda
-    EventBus.on('caixa:aberto',     () => RenderService.renderCatalogo());
+    EventBus.on('caixa:aberto',     () => {
+      RenderService.renderCatalogo();
+      const banner = Utils.el('caixaFechadoBanner');
+      if (banner) { banner.classList.add('hidden'); banner.classList.remove('flex'); }
+    });
     EventBus.on('caixa:fechado',    () => RenderService.renderCatalogo());
     EventBus.on('ponto:registered', () => RenderService.renderCatalogo());
 
@@ -1771,7 +2232,7 @@ const Bootstrap = (() => {
     EventBus.on('cart:item-added',   () => RenderService.renderCarrinho());
     EventBus.on('cart:item-removed', () => RenderService.renderCarrinho());
     EventBus.on('cart:cleared',      () => RenderService.renderCarrinho());
-    EventBus.on('cart:checkout',     () => RenderService.updateStats());
+    EventBus.on('cart:checkout',     () => { RenderService.updateStats(); RenderService.renderTurboMode(); });
 
     // Float-cart bounce ao adicionar item
     EventBus.on('cart:item-added', () => {
@@ -1797,6 +2258,8 @@ const Bootstrap = (() => {
 
   function start() {
     _registerEventListeners();
+    BackupManager.init();
+    SessionManager.init();
 
     // Captura CH_INIT ANTES de definir o wrapper, para evitar referência circular.
     const _originalCHInit = window.CH_INIT;
@@ -1874,21 +2337,23 @@ function addCart(prodId, packIdx, btnEl) { CartService.addItem(prodId, packIdx, 
 function removerCart(i)          { CartService.removeItem(i); }
 
 async function limparCarrinho() {
-  if (CartService.isEmpty()) return;
-  const count = CartService.getCount();
-  const ok = await Dialog.confirm({
-    title:        'Limpar carrinho',
-    message:      `Remover ${count} ${count === 1 ? 'item' : 'itens'} do carrinho?`,
-    icon:         'fa-trash',
-    iconBg:       'bg-red-500/15',
-    iconColor:    'text-red-400',
-    confirmLabel: 'Limpar',
-    confirmCls:   'bg-red-600 hover:bg-red-500 text-white',
-    danger:       true,
-  });
-  if (!ok) return;
-  CartService.clear();
-  UIService.showToast('Carrinho', 'Limpo', 'warning');
+  try {
+    if (CartService.isEmpty()) return;
+    const count = CartService.getCount();
+    const ok = await Dialog.confirm({
+      title:        'Limpar carrinho',
+      message:      `Remover ${count} ${count === 1 ? 'item' : 'itens'} do carrinho?`,
+      icon:         'fa-trash',
+      iconBg:       'bg-red-500/15',
+      iconColor:    'text-red-400',
+      confirmLabel: 'Limpar',
+      confirmCls:   'bg-red-600 hover:bg-red-500 text-white',
+      danger:       true,
+    });
+    if (!ok) return;
+    CartService.clear();
+    UIService.showToast('Carrinho', 'Limpo', 'warning');
+  } catch (err) { console.error('[limparCarrinho]', err); }
 }
 
 function abrirDrawer() {
@@ -1925,6 +2390,72 @@ function finalizarVenda()              { VendaService.finalizarVenda(); }
 function fecharModalVenda()            { VendaService.fecharModalVenda(); }
 function baixarTxt()                   { VendaService.baixarComprovante(); }
 function enviarWhatsapp()              { VendaService.enviarWhatsapp(); }
+
+/**
+ * Pagamento rápido — finaliza venda em 1 toque sem abrir modal.
+ * Usado pelos botões Dinheiro / Pix / Cartão no carrinho.
+ * @param {'Dinheiro'|'Pix'|'Cartão'} forma
+ */
+function quickPay(forma) {
+  if (CartService.isEmpty()) return;
+
+  const bloqueio = _getPdvBloqueio();
+  if (bloqueio) {
+    UIService.showToast('Acesso Bloqueado', bloqueio, 'error');
+    TabManager.switchTab('ponto');
+    return;
+  }
+
+  CartService.setFormaPgto(forma);
+  VendaService.finalizarVenda();
+}
+
+/** Copia recibo formatado para o clipboard */
+async function copiarRecibo() {
+  const v = VendaService.getLastSale();
+  if (!v) return;
+  const cfg      = Store.Selectors.getConfig();
+  const nomeLoja = cfg.nome || 'PDV App';
+  const fmt      = val => Utils.formatCurrency(val);
+  const SEP      = '─'.repeat(28);
+
+  let txt = `🧾 *${nomeLoja}*\n`;
+  txt    += `📅 ${v.data || ''}${v.hora ? ' · ' + v.hora : ''}\n`;
+  txt    += `${SEP}\n`;
+  (v.itens || []).forEach(i => {
+    const qt = i.label === 'UNID' ? '1x' : i.label;
+    txt += `${qt} ${i.nome} · ${fmt(i.preco)}\n`;
+  });
+  txt += `${SEP}\n`;
+  if ((v.desconto || 0) > 0) {
+    txt += `Subtotal: ${fmt(v.subtotal || v.total)}\n`;
+    txt += `🏷️ Desconto: -${fmt(v.desconto)}\n`;
+  }
+  if ((v.pagamentos || []).length > 1) {
+    v.pagamentos.forEach(p => { txt += `💳 ${p.forma}: ${fmt(p.valor)}\n`; });
+  } else if (v.formaPgto) {
+    txt += `💳 ${v.formaPgto}\n`;
+  }
+  txt += `*TOTAL: ${fmt(v.total)}*\n`;
+  txt += `${SEP}\n`;
+  txt += `#${String(v.id).slice(-6)} · Obrigado! 🍺`;
+
+  try {
+    await navigator.clipboard.writeText(txt);
+    UIService.showToast('Copiado!', 'Recibo copiado para o clipboard', 'success');
+  } catch {
+    // Fallback para devices sem clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.style.position = 'fixed';
+    ta.style.opacity  = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    UIService.showToast('Copiado!', 'Recibo copiado', 'success');
+  }
+}
 
 function salvarZap() {
   const raw = Utils.el('zapNum')?.value || '';
@@ -1999,8 +2530,9 @@ Object.defineProperty(window, 'lastSale', {
   configurable: true,
 });
 
-/* ── Bridge global setCatFilter ─────────────────────────────────── */
-function setCatFilter(cat) { RenderService.setCatFilter(cat); }
+/* ── Bridge global setCatFilter e setCatalogMode ─────────────────── */
+function setCatFilter(cat)       { RenderService.setCatFilter(cat); }
+function setCatalogMode(mode)    { RenderService.setCatalogMode(mode); }
 
 /* ── Configurações ──────────────────────────────────────────────── */
 
@@ -2017,8 +2549,46 @@ function abrirConfig() {
   if (el('cfgApiKey'))         el('cfgApiKey').value         = cfg.anthropicApiKey  || '';
   if (el('cfgWhatsappAdm'))    el('cfgWhatsappAdm').value    = cfg.whatsapp              || '';
   if (el('cfgWhatsappColab'))  el('cfgWhatsappColab').value  = cfg.whatsappColaborador   || '';
+  if (el('cfgSessionTimeout')) el('cfgSessionTimeout').value = cfg.sessionTimeoutMinutes ?? 30;
+  // Toggle som
+  const somAtivo = cfg.somNotificacoes !== false;
+  const btn = el('cfgSomBtn'); const dot = el('cfgSomDot');
+  if (btn) btn.className = `relative w-11 h-6 rounded-full transition-all flex-shrink-0 ${somAtivo ? 'bg-blue-600' : 'bg-slate-700'}`;
+  if (dot) dot.className = `absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${somAtivo ? 'translate-x-5' : 'translate-x-0.5'}`;
   if (el('cfgSecAdmTool')) el('cfgSecAdmTool').classList.toggle('hidden', !AuthService.isAdmin());
   _renderCfgCategorias();
+
+  // ── Identidade Visual ──────────────────────────────────────
+  const loja = _getLojaConfig();
+  const corEl = el('cfgCorPrimaria');
+  if (corEl) corEl.value = loja.corPrimaria || '#3b82f6';
+  const logoPreview = el('cfgLogoPreview');
+  if (logoPreview) {
+    const nomeCfg = cfg.nome || loja.nome || 'CH';
+    const corCfg  = loja.corPrimaria || '#3b82f6';
+    const src     = loja.logoBase64 || _gerarAvatarSVG(nomeCfg, corCfg);
+    logoPreview.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:contain;border-radius:10px;">`;
+  }
+  window._cfgLogoTemp = undefined;
+
+  // ── Firebase + Export/Import (só ADM) ─────────────────────
+  const isAdm = AuthService.isAdmin();
+  const fbSec = el('cfgSecFirebase');
+  if (fbSec) fbSec.classList.toggle('hidden', !isAdm);
+  const expSec = el('cfgSecExportImport');
+  if (expSec) expSec.classList.toggle('hidden', !isAdm);
+
+  if (isAdm) {
+    const ta = el('cfgFirebaseJson');
+    if (ta) ta.value = loja.firebase ? JSON.stringify(loja.firebase, null, 2) : '';
+    const colEl = el('cfgFirestoreCollection');
+    if (colEl) { colEl.value = loja.firestoreCollection || 'ch_geladas'; delete colEl.dataset.userEdited; }
+    const docEl = el('cfgFirestoreDocId');
+    if (docEl) docEl.value = loja.firestoreDocId || 'sistema';
+    const statusEl = el('cfgFirebaseJsonStatus');
+    if (statusEl) statusEl.classList.add('hidden');
+  }
+
   UIService.openModal('modalConfig');
 }
 
@@ -2077,14 +2647,19 @@ async function salvarConfig() {
   const apiKey = (Utils.el('cfgApiKey')?.value         || '').trim();
   const zapAdm  = (Utils.el('cfgWhatsappAdm')?.value   || '').replace(/\D/g, '');
   const zapColab = (Utils.el('cfgWhatsappColab')?.value || '').replace(/\D/g, '');
+  const sessionTimeout = parseInt(Utils.el('cfgSessionTimeout')?.value) || 30;
+  // Som: lê do estado atual do botão (toggle não tem input)
+  const somAtivo = Utils.el('cfgSomBtn')?.classList.contains('bg-blue-600') !== false;
 
   // Validação dos PINs
   if (pinA && pinA.length < 3) { UIService.showToast('PIN inválido', 'PIN Administrador precisa de mínimo 3 dígitos', 'error'); return; }
   if (pinC && pinC.length < 3) { UIService.showToast('PIN inválido', 'PIN Colaborador precisa de mínimo 3 dígitos', 'error'); return; }
 
-  cfg.nome        = nome;
-  cfg.alertaStock = alerta;
-  cfg.telegram    = { token: tgTok, chatId: tgCid };
+  cfg.nome                   = nome;
+  cfg.alertaStock            = alerta;
+  cfg.telegram               = { token: tgTok, chatId: tgCid };
+  cfg.sessionTimeoutMinutes  = Math.max(5, Math.min(480, sessionTimeout));
+  cfg.somNotificacoes        = somAtivo;
   if (apiKey)  cfg.anthropicApiKey     = apiKey;
   if (zapAdm)  cfg.whatsapp            = zapAdm;
   if (zapColab) cfg.whatsappColaborador = zapColab;
@@ -2094,6 +2669,43 @@ async function salvarConfig() {
   // FIX: mutate deve receber função, não objeto — objeto era ignorado silenciosamente
   Store.mutate(state => { state.config = { ...cfg }; });
   SyncService.persist();
+
+  // ── Salvar identidade visual e Firebase em LOJA_CONFIG ────
+  const loja = _getLojaConfig();
+  loja.nome = nome;
+  const corPrimaria = (Utils.el('cfgCorPrimaria')?.value || '').trim();
+  if (corPrimaria) loja.corPrimaria = corPrimaria;
+
+  // Logo (undefined = sem alteração, '' = remover, string = novo logo)
+  if (window._cfgLogoTemp !== undefined) {
+    loja.logoBase64 = window._cfgLogoTemp || null;
+  }
+
+  // Firebase (só ADM, só se preenchido)
+  if (AuthService.isAdmin()) {
+    const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+    if (jsonStr) {
+      try {
+        const fbCfg = JSON.parse(jsonStr);
+        if (fbCfg.apiKey && fbCfg.projectId) {
+          loja.firebase = fbCfg;
+          loja.firestoreCollection = (Utils.el('cfgFirestoreCollection')?.value || '').trim() || 'ch_geladas';
+          loja.firestoreDocId      = (Utils.el('cfgFirestoreDocId')?.value      || '').trim() || 'sistema';
+        }
+      } catch (e) { /* JSON inválido — utilizador não preencheu */ }
+    } else if (jsonStr === '') {
+      // Campo apagado → remover config personalizada
+      delete loja.firebase;
+      delete loja.firestoreCollection;
+      delete loja.firestoreDocId;
+    }
+  }
+
+  _saveLojaConfig(loja);
+
+  // Aplica tema e logos imediatamente
+  if (corPrimaria) aplicarTema(corPrimaria);
+  _atualizarLogos(loja.logoBase64 || null, loja.nome, corPrimaria || '#3b82f6');
 
   if (nome) document.title = nome;
   RenderService.renderCatFilter();
@@ -2112,7 +2724,7 @@ async function testarTelegram() {
     const res  = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: '✅ CH Geladas PDV — notificações Telegram activas!' })
+      body: JSON.stringify({ chat_id: chatId, text: `✅ ${Store.Selectors.getConfig()?.nome || 'PDV'} — notificações Telegram activas!` })
     });
     const data = await res.json();
     if (data.ok) UIService.showToast('Telegram OK!', 'Mensagem enviada com sucesso', 'success');
@@ -2122,5 +2734,299 @@ async function testarTelegram() {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   LOJA CONFIG — Identidade Visual, Tema, Firebase, Export/Import
+══════════════════════════════════════════════════════════════════ */
+
+/** Lê a configuração da loja */
+function _getLojaConfig() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+
+/** Persiste a configuração da loja */
+function _saveLojaConfig(cfg) {
+  localStorage.setItem('LOJA_CONFIG', JSON.stringify(cfg));
+}
+
+/** Gera SVG de avatar com iniciais da empresa */
+function _gerarAvatarSVG(nome, cor) {
+  const iniciais = (nome || 'CH')
+    .split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(w => w[0].toUpperCase()).join('') || '?';
+  const c = cor || '#3b82f6';
+  const r = parseInt(c.slice(1,3), 16);
+  const g = parseInt(c.slice(3,5), 16);
+  const b = parseInt(c.slice(5,7), 16);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="22" fill="rgba(${r},${g},${b},0.15)"/>
+    <rect width="100" height="100" rx="22" fill="none" stroke="rgba(${r},${g},${b},0.4)" stroke-width="2"/>
+    <text x="50" y="50" text-anchor="middle" dominant-baseline="central"
+      font-family="system-ui,sans-serif" font-weight="900"
+      font-size="${iniciais.length > 1 ? 38 : 44}" fill="${c}">${iniciais}</text>
+  </svg>`;
+  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+}
+
+/** Aplica cor primária via CSS variables — afeta nav, botões, badges */
+function aplicarTema(cor) {
+  if (!cor || !/^#[0-9a-fA-F]{6}$/.test(cor)) return;
+  const r = parseInt(cor.slice(1,3), 16);
+  const g = parseInt(cor.slice(3,5), 16);
+  const b = parseInt(cor.slice(5,7), 16);
+
+  let style = document.getElementById('ch-tema-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'ch-tema-style';
+    document.head.appendChild(style);
+  }
+  style.textContent = `
+    :root { --ch-primary: ${cor}; --ch-primary-rgb: ${r},${g},${b}; }
+    .nav-btn.active { color: ${cor} !important; border-bottom-color: ${cor} !important; background: rgba(${r},${g},${b},.06) !important; }
+    .fin-tab.active { color: ${cor} !important; border-bottom-color: ${cor} !important; background: rgba(${r},${g},${b},.07) !important; }
+    .label { color: ${cor} !important; }
+    .bg-blue-600 { background-color: ${cor} !important; }
+    .hover\\:bg-blue-500:hover { background-color: ${cor}dd !important; }
+    .text-blue-400 { color: ${cor} !important; }
+    .text-blue-300 { color: ${cor}bb !important; }
+    .border-blue-500\\/20, .border-blue-500\\/30 { border-color: rgba(${r},${g},${b},.25) !important; }
+    .bg-blue-500\\/10, .bg-blue-600\\/10 { background: rgba(${r},${g},${b},.10) !important; }
+    .bg-blue-500\\/8, .bg-blue-600\\/8 { background: rgba(${r},${g},${b},.08) !important; }
+    .badge.b-blue { background: rgba(${r},${g},${b},.18) !important; color: ${cor} !important; border-color: rgba(${r},${g},${b},.3) !important; }
+    #syncDot { background: ${cor} !important; }
+  `;
+}
+
+/** Atualiza todos os slots de logo no app */
+function _atualizarLogos(logoSrc, nomeLoja, corPrimaria) {
+  const src = logoSrc || _gerarAvatarSVG(nomeLoja, corPrimaria);
+  ['chLogoHeader', 'chLogoLogin', 'chLogoLoading'].forEach(id => {
+    const wrap = document.getElementById(id);
+    if (!wrap) return;
+    const img = wrap.querySelector('img');
+    if (img) { img.src = src; img.alt = nomeLoja || 'Logo'; }
+  });
+}
+
+/** Aplica identidade visual no arranque do app */
+function _initLojaIdentidade() {
+  const loja = _getLojaConfig();
+  const nome = loja.nome || Store.Selectors.getConfig()?.nome || 'PDV App';
+  if (loja.corPrimaria) aplicarTema(loja.corPrimaria);
+  _atualizarLogos(loja.logoBase64 || null, nome, loja.corPrimaria || '#3b82f6');
+  // Atualiza title e meta-title dinamicamente
+  document.title = nome;
+  const metaTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (metaTitle) metaTitle.setAttribute('content', nome);
+}
+
+/* ── Cfg: Logo ──────────────────────────────────────────────────── */
+function cfgLogoUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (file.size > 600 * 1024) {
+    UIService.showToast('Imagem muito grande', 'Máximo 600 KB', 'error'); return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const src = e.target.result;
+    const preview = Utils.el('cfgLogoPreview');
+    if (preview) preview.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:contain;border-radius:10px;">`;
+    window._cfgLogoTemp = src;
+    UIService.showToast('Logo carregado', 'Clique em Guardar para confirmar', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+
+function cfgLogoRemover() {
+  window._cfgLogoTemp = '';
+  const loja = _getLojaConfig();
+  const nome = (Utils.el('cfgNome')?.value || loja.nome || 'CH').trim();
+  const cor  = Utils.el('cfgCorPrimaria')?.value || loja.corPrimaria || '#3b82f6';
+  const preview = Utils.el('cfgLogoPreview');
+  if (preview) preview.innerHTML = `<img src="${_gerarAvatarSVG(nome, cor)}" style="width:100%;height:100%;object-fit:contain;">`;
+}
+
+/* ── Cfg: Tema / Cor ────────────────────────────────────────────── */
+function cfgPreviewCor(cor) {
+  if (!cor) return;
+  aplicarTema(cor);
+  // Actualiza avatar se não há logo personalizado
+  const loja = _getLojaConfig();
+  if (!loja.logoBase64 && !window._cfgLogoTemp) {
+    const nome = (Utils.el('cfgNome')?.value || loja.nome || 'CH').trim();
+    const preview = Utils.el('cfgLogoPreview');
+    if (preview) preview.innerHTML = `<img src="${_gerarAvatarSVG(nome, cor)}" style="width:100%;height:100%;object-fit:contain;">`;
+  }
+}
+
+function cfgSetCor(cor) {
+  const inp = Utils.el('cfgCorPrimaria');
+  if (inp) inp.value = cor;
+  cfgPreviewCor(cor);
+}
+
+/* ── Cfg: Firebase ──────────────────────────────────────────────── */
+
+/** Auto-sugere nome da coleção a partir do projectId */
+function cfgFirebaseJsonChange() {
+  const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+  const statusEl = Utils.el('cfgFirebaseJsonStatus');
+  if (statusEl) statusEl.classList.add('hidden');
+  try {
+    const cfg = JSON.parse(jsonStr);
+    if (cfg.projectId) {
+      const colEl = Utils.el('cfgFirestoreCollection');
+      if (colEl && !colEl.dataset.userEdited) {
+        colEl.value = cfg.projectId.toLowerCase().replace(/-/g,'_').replace(/[^a-z0-9_]/g,'');
+      }
+    }
+  } catch (e) { /* JSON ainda incompleto */ }
+}
+
+/** Testa credenciais Firebase via REST API sem reinicializar o SDK */
+async function cfgTestarFirebase() {
+  const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+  if (!jsonStr) { UIService.showToast('Cole o JSON Firebase', '', 'warning'); return; }
+
+  let config;
+  try { config = JSON.parse(jsonStr); }
+  catch (e) { UIService.showToast('JSON inválido', e.message, 'error'); return; }
+
+  if (!config.apiKey || !config.projectId) {
+    UIService.showToast('Config incompleta', 'apiKey e projectId obrigatórios', 'error'); return;
+  }
+
+  const col      = (Utils.el('cfgFirestoreCollection')?.value || 'ch_geladas').trim();
+  const docId    = (Utils.el('cfgFirestoreDocId')?.value      || 'sistema').trim();
+  const statusEl = Utils.el('cfgFirebaseJsonStatus');
+
+  UIService.showToast('Testando...', 'A verificar credenciais', 'info');
+  if (statusEl) { statusEl.textContent = '⏳ A verificar...'; statusEl.className = 'text-[9px] mt-1 text-slate-400 font-bold'; statusEl.classList.remove('hidden'); }
+
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents/${col}/${docId}?key=${config.apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if ([200, 404].includes(res.status)) {
+      UIService.showToast('✅ Firebase válido!', `Projeto: ${config.projectId}`, 'success');
+      if (statusEl) { statusEl.textContent = `✅ Credenciais OK — projeto: ${config.projectId}`; statusEl.className = 'text-[9px] mt-1 text-emerald-400 font-bold'; }
+    } else if (res.status === 403) {
+      UIService.showToast('✅ Credenciais OK', 'Ajuste as regras do Firestore', 'success');
+      if (statusEl) { statusEl.textContent = '✅ Credenciais válidas (403 — verifique regras Firestore)'; statusEl.className = 'text-[9px] mt-1 text-amber-400 font-bold'; }
+    } else if (res.status === 400) {
+      UIService.showToast('❌ API Key inválida', 'Verifique a apiKey', 'error');
+      if (statusEl) { statusEl.textContent = '❌ API Key inválida ou projecto errado'; statusEl.className = 'text-[9px] mt-1 text-red-400 font-bold'; }
+    } else {
+      UIService.showToast('⚠️ Resposta inesperada', `HTTP ${res.status}`, 'warning');
+      if (statusEl) { statusEl.textContent = `⚠️ HTTP ${res.status} — verifique configuração`; statusEl.className = 'text-[9px] mt-1 text-amber-400 font-bold'; }
+    }
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Timeout — servidor sem resposta' : e.message;
+    UIService.showToast('❌ Erro de rede', msg, 'error');
+    if (statusEl) { statusEl.textContent = `❌ ${msg}`; statusEl.className = 'text-[9px] mt-1 text-red-400 font-bold'; }
+  }
+}
+
+/** Restaura Firebase padrão e recarrega */
+async function cfgResetFirebase() {
+  const ok = await Dialog.confirm(
+    'Restaurar Firebase padrão?',
+    'A configuração personalizada será removida e o app vai recarregar com o Firebase padrão (padrão).'
+  );
+  if (!ok) return;
+  const loja = _getLojaConfig();
+  delete loja.firebase;
+  delete loja.firestoreCollection;
+  delete loja.firestoreDocId;
+  _saveLojaConfig(loja);
+  UIService.showToast('Firebase restaurado', 'A recarregar...', 'success');
+  setTimeout(() => location.reload(), 1400);
+}
+
+/* ── Cfg: Export / Import ───────────────────────────────────────── */
+function cfgExportarConfig() {
+  const loja = _getLojaConfig();
+  const cfg  = Store.Selectors.getConfig();
+  const exportData = {
+    _versao: '1.0',
+    _exportadoEm: new Date().toISOString(),
+    loja,
+    preferencias: {
+      nome: cfg.nome,
+      alertaStock: cfg.alertaStock,
+      categorias: cfg.categorias,
+      sessionTimeoutMinutes: cfg.sessionTimeoutMinutes,
+      somNotificacoes: cfg.somNotificacoes,
+    },
+  };
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const nome = (loja.nome || cfg.nome || 'loja').replace(/\s+/g, '-').toLowerCase();
+  a.href = url; a.download = `config-${nome}-${Date.now()}.json`; a.click();
+  URL.revokeObjectURL(url);
+  UIService.showToast('Config exportada!', 'Ficheiro JSON guardado', 'success');
+}
+
+function cfgImportarConfig(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data._versao || (!data.loja && !data.preferencias)) throw new Error('Formato de ficheiro inválido');
+      const nomeLoja = data.loja?.nome || data.preferencias?.nome || '?';
+      const ok = await Dialog.confirm(
+        'Importar configuração?',
+        `Vai substituir identidade visual, Firebase e preferências.\nLoja: ${nomeLoja}`
+      );
+      if (!ok) { input.value = ''; return; }
+      if (data.loja) _saveLojaConfig(data.loja);
+      if (data.preferencias) {
+        const cfg = { ...Store.Selectors.getConfig(), ...data.preferencias };
+        Store.mutate(state => { state.config = cfg; });
+        SyncService.persist();
+      }
+      UIService.showToast('Config importada!', 'A recarregar...', 'success');
+      setTimeout(() => location.reload(), 1400);
+    } catch (e) {
+      UIService.showToast('Erro ao importar', e.message, 'error');
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
 /* ── Inicia a aplicação ─────────────────────────────────────────── */
+function toggleTurbo() {
+  const panel   = Utils.el('turboPanel');
+  const chevron = Utils.el('turboChevron');
+  if (!panel) return;
+  const open = panel.classList.toggle('hidden') === false;
+  if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
+  if (open) RenderService.renderTurboMode();
+}
+
 Bootstrap.start();
+
+/* ── BackupManager bridges ───────────────────────────────────────── */
+function criarBackupManual()          { BackupManager.criarBackup("manual"); }
+function downloadBackupJSON()         { BackupManager.downloadBackup(); }
+function restaurarBackup(id)          { BackupManager.restaurarBackup(id); }
+function listarBackups()              { return BackupManager.listarBackups(); }
+
+/* ── Toggle de som nas configurações ──────────────────────────── */
+function cfgToggleSom() {
+  const btn = Utils.el('cfgSomBtn');
+  const dot = Utils.el('cfgSomDot');
+  if (!btn) return;
+  const ativo = btn.classList.contains('bg-blue-600');
+  btn.className = `relative w-11 h-6 rounded-full transition-all flex-shrink-0 ${!ativo ? 'bg-blue-600' : 'bg-slate-700'}`;
+  if (dot) dot.className = `absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${!ativo ? 'translate-x-5' : 'translate-x-0.5'}`;
+}

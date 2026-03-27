@@ -576,7 +576,7 @@ const IAService = (() => {
       .map(([nome,d]) => ({ nome, qtd: d.qtd, receita: Number(d.receita.toFixed(2)) }));
 
     return {
-      estabelecimento: config.nome || 'CH Geladas',
+      estabelecimento: config.nome || 'PDV App',
       data: new Date().toLocaleDateString('pt-BR', { weekday:'long', year:'numeric', month:'long', day:'numeric' }),
       estoque: {
         total: estoque.length,
@@ -677,7 +677,7 @@ const IARenderer = (() => {
             </div>
             <div class="flex-1 min-w-0">
               <h2 class="text-sm font-black text-white">Análise Inteligente</h2>
-              <p class="text-[10px] text-violet-400 font-bold">${config.nome || 'CH Geladas'} · ${cards.length} análise(s) ativas</p>
+              <p class="text-[10px] text-violet-400 font-bold">${config.nome || 'PDV App'} · ${cards.length} análise(s) ativas</p>
             </div>
             <button onclick="IARenderer.renderIA()" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-all" title="Atualizar">
               <i class="fas fa-sync-alt text-xs"></i>
@@ -847,3 +847,76 @@ const IARenderer = (() => {
 
 /* ══ GLOBAL ══ */
 function renderIA() { IARenderer.renderIA(); }
+
+/* ═══════════════════════════════════════════════════════════════
+   IA ALERTAS AUTOMÁTICOS — Roda a cada 30min em segundo plano
+═══════════════════════════════════════════════════════════════ */
+const IAAlertaService = (() => {
+  const COOLDOWN_ALERTA_MS = 4 * 60 * 60 * 1000; // 4h entre alertas do mesmo tipo
+  const _ultimoAlerta = {};
+
+  function _podaAlertar(tipo) {
+    const agora = Date.now();
+    if (agora - (_ultimoAlerta[tipo] || 0) < COOLDOWN_ALERTA_MS) return false;
+    _ultimoAlerta[tipo] = agora;
+    return true;
+  }
+
+  function verificar() {
+    const estoque   = Store.Selectors.getEstoque() || [];
+    const vendas    = Store.Selectors.getVendas()  || [];
+    const config    = Store.Selectors.getConfig()  || {};
+    const thresh    = config.alertaStock ?? 3;
+
+    // 1. Produtos esgotados
+    const esgotados = estoque.filter(p => p.qtdUn <= 0);
+    if (esgotados.length > 0 && _podaAlertar('esgotado')) {
+      const nomes = esgotados.slice(0, 5).map(p => p.nome).join(', ');
+      UIService.showToast('⚠️ Estoque Zerado', `${esgotados.length} produto(s): ${nomes}`, 'error');
+      EventBus.emit('notif:alerta-estoque', { esgotados });
+    }
+
+    // 2. Produtos com stock baixo (apenas os mais críticos)
+    const baixo = estoque.filter(p => p.qtdUn > 0 && p.qtdUn <= thresh);
+    if (baixo.length > 0 && _podaAlertar('baixo_estoque')) {
+      const nomes = baixo.slice(0, 3).map(p => `${p.nome}(${p.qtdUn})`).join(', ');
+      UIService.showToast('⚠️ Stock Baixo', nomes, 'warning');
+    }
+
+    // 3. Queda brusca de vendas: hoje abaixo de 40% da média dos últimos 7 dias
+    const isoHoje  = Utils.todayISO();
+    const dispHoje = Utils.today();
+    const hoje7 = new Date(); hoje7.setDate(hoje7.getDate() - 7);
+    const vendas7d = vendas.filter(v => {
+      const dc = v.dataCurta || '';
+      try {
+        const d = dc.includes('-') ? new Date(dc) : new Date(dc.split('/').reverse().join('-'));
+        return d >= hoje7 && dc !== isoHoje && dc !== dispHoje;
+      } catch { return false; }
+    });
+    const recHoje   = vendas.filter(v => v.dataCurta === isoHoje || v.dataCurta === dispHoje).reduce((s, v) => s + (v.total || 0), 0);
+    const diasUnicos = new Set(vendas7d.map(v => v.dataCurta)).size;
+    if (diasUnicos >= 3) {
+      const media7d = vendas7d.reduce((s, v) => s + (v.total || 0), 0) / diasUnicos;
+      if (recHoje > 0 && recHoje < media7d * 0.4 && _podaAlertar('queda_vendas')) {
+        UIService.showToast('📉 Vendas Baixas', `Hoje: ${Utils.formatCurrency(recHoje)} vs média: ${Utils.formatCurrency(media7d)}`, 'warning');
+      }
+    }
+  }
+
+  // Roda ao iniciar e a cada 30min
+  function init() {
+    setTimeout(verificar, 10_000);
+    setInterval(verificar, 30 * 60_000);
+    // FIX: roda após qualquer tipo de venda (PDV, Comanda, Delivery)
+    EventBus.on('venda:concluida',         verificar);
+    EventBus.on('comanda:finalizada',      verificar);
+    EventBus.on('delivery:status-changed', pedido => {
+      if (pedido?.status === 'ENTREGUE') verificar();
+    });
+  }
+
+  return Object.freeze({ verificar, init });
+})();
+
+IAAlertaService.init();

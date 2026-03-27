@@ -93,9 +93,10 @@ const PontoService = (() => {
    * @param {number|string} id
    */
   async function apagar(id) {
-    const reg = Store.getState().ponto.find(p => String(p.id) === String(id));
-    if (!reg) return;
-    const ok = await Dialog.danger({
+    try {
+      const reg = Store.getState().ponto.find(p => String(p.id) === String(id));
+      if (!reg) return;
+      const ok = await Dialog.danger({
       title:        `Apagar registo de ${reg.nome}?`,
       message:      'Esta ação não pode ser desfeita.',
       icon:         'fa-trash',
@@ -106,27 +107,30 @@ const PontoService = (() => {
       const idx = state.ponto.findIndex(p => String(p.id) === String(id));
       if (idx !== -1) state.ponto.splice(idx, 1);
     }, true);
-    SyncService.persist();
-    UIService.showToast('Ponto', 'Registo apagado', 'warning');
-    EventBus.emit('ponto:deleted');
+      SyncService.persist();
+      UIService.showToast('Ponto', 'Registo apagado', 'warning');
+      EventBus.emit('ponto:deleted');
+    } catch (err) { console.error('[ponto.apagar]', err); }
   }
 
   /**
    * Limpa todos os registros (apenas admin)
    */
   async function limparTodos() {
-    if (!AuthService.isAdmin()) return;
-    const ok = await Dialog.danger({
-      title:        'Apagar todos os registos?',
-      message:      'Esta ação irá remover TODOS os registos de ponto e não pode ser desfeita.',
-      icon:         'fa-exclamation-triangle',
-      confirmLabel: 'Apagar Tudo',
-    });
-    if (!ok) return;
-    Store.mutate(state => { state.ponto.splice(0); }, true);
-    SyncService.persist();
-    UIService.showToast('Ponto', 'Todos os registos apagados', 'warning');
-    EventBus.emit('ponto:cleared');
+    try {
+      if (!AuthService.isAdmin()) return;
+      const ok = await Dialog.danger({
+        title:        'Apagar todos os registos?',
+        message:      'Esta ação irá remover TODOS os registos de ponto e não pode ser desfeita.',
+        icon:         'fa-exclamation-triangle',
+        confirmLabel: 'Apagar Tudo',
+      });
+      if (!ok) return;
+      Store.mutate(state => { state.ponto.splice(0); }, true);
+      SyncService.persist();
+      UIService.showToast('Ponto', 'Todos os registos apagados', 'warning');
+      EventBus.emit('ponto:cleared');
+    } catch (err) { console.error('[ponto.limparTodos]', err); }
   }
 
   /**
@@ -145,7 +149,115 @@ const PontoService = (() => {
     if (btnS) btnS.className = `py-3 rounded-xl font-black uppercase text-xs border transition-all ${!activeE ? 'bg-red-600/30 text-red-300 border-red-500/50' : 'bg-slate-800 text-slate-500 border-white/5'}`;
   }
 
-  return Object.freeze({ TIPOS, registrar, abrirEditar, salvarEdicao, apagar, limparTodos, _setPontoTipoBtn });
+  /**
+   * Gera relatório mensal de ponto por colaborador
+   * @param {number} ano
+   * @param {number} mes — 1-12
+   * @returns {Array<{nome, diasTrabalhados, horasTrabalhadas, registros}>}
+   */
+  function relatorioMensal(ano, mes) {
+    const todos = Store.getState().ponto || [];
+    // Filtra registros do mês
+    const mesISO = `${ano}-${String(mes).padStart(2, '0')}`;
+    const doMes  = todos.filter(p => (p.dataCurta || '').startsWith(mesISO));
+
+    // Agrupa por nome
+    const porNome = {};
+    doMes.forEach(p => {
+      const n = p.nome || 'Desconhecido';
+      if (!porNome[n]) porNome[n] = { nome: n, registros: [] };
+      porNome[n].registros.push(p);
+    });
+
+    return Object.values(porNome).map(col => {
+      // Emparelha ENTRADA + SAÍDA por dia
+      const porDia = {};
+      col.registros.forEach(r => {
+        const d = r.dataCurta || '';
+        if (!porDia[d]) porDia[d] = [];
+        porDia[d].push(r);
+      });
+
+      let horasTotal = 0;
+      let diasComEntrada = 0;
+
+      Object.values(porDia).forEach(regs => {
+        const entradas = regs.filter(r => r.tipo === 'ENTRADA').sort((a, b) => a.ts - b.ts);
+        const saidas   = regs.filter(r => r.tipo === 'SAÍDA' || r.tipo === 'SAIDA').sort((a, b) => a.ts - b.ts);
+        if (entradas.length > 0) diasComEntrada++;
+        const pares = Math.min(entradas.length, saidas.length);
+        for (let i = 0; i < pares; i++) {
+          const tsE = entradas[i].ts || new Date(entradas[i].data).getTime();
+          const tsS = saidas[i].ts   || new Date(saidas[i].data).getTime();
+          if (tsS > tsE) horasTotal += (tsS - tsE) / 3_600_000;
+        }
+      });
+
+      return {
+        nome:             col.nome,
+        diasTrabalhados:  diasComEntrada,
+        horasTrabalhadas: +horasTotal.toFixed(2),
+        registros:        col.registros.length,
+      };
+    }).sort((a, b) => b.diasTrabalhados - a.diasTrabalhados);
+  }
+
+  /**
+   * Exibe modal com relatório mensal
+   */
+  async function exibirRelatorioMensal() {
+    const agora = new Date();
+    const ano   = agora.getFullYear();
+    const mes   = agora.getMonth() + 1;
+    const MESES = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const dados = relatorioMensal(ano, mes);
+
+    if (!dados.length) {
+      UIService.showToast('Ponto', 'Sem registros este mês', 'warning');
+      return;
+    }
+
+    const linhas = dados.map(c => `
+      <tr class="border-b border-white/5">
+        <td class="py-2 pr-3 text-[10px] font-black text-slate-200">${c.nome}</td>
+        <td class="py-2 pr-3 text-[10px] font-bold text-slate-300 text-center">${c.diasTrabalhados}</td>
+        <td class="py-2 pr-3 text-[10px] font-bold text-blue-400 text-center">${c.horasTrabalhadas.toFixed(1)}h</td>
+        <td class="py-2 text-[10px] font-bold text-slate-500 text-center">${c.registros}</td>
+      </tr>`).join('');
+
+    const html = `
+      <div style="max-width:360px;background:rgba(13,17,23,0.98);border:1px solid rgba(255,255,255,0.09);border-radius:1.5rem;padding:1.5rem;">
+        <h3 style="font-size:14px;font-weight:900;color:#fff;margin-bottom:4px;">📋 Relatório — ${MESES[mes]} ${ano}</h3>
+        <p style="font-size:10px;color:#64748b;margin-bottom:16px;">${dados.length} colaborador(es)</p>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1);">
+            <th style="font-size:8px;color:#475569;text-align:left;padding-bottom:6px;text-transform:uppercase;">Nome</th>
+            <th style="font-size:8px;color:#475569;text-align:center;padding-bottom:6px;text-transform:uppercase;">Dias</th>
+            <th style="font-size:8px;color:#475569;text-align:center;padding-bottom:6px;text-transform:uppercase;">Horas</th>
+            <th style="font-size:8px;color:#475569;text-align:center;padding-bottom:6px;text-transform:uppercase;">Registros</th>
+          </tr></thead>
+          <tbody class="ponto-relatorio-body">${linhas}</tbody>
+        </table>
+        <button onclick="document.getElementById('modalRelatorioMensal').classList.remove('open')"
+          style="width:100%;margin-top:16px;padding:10px;border-radius:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;font-size:10px;font-weight:800;text-transform:uppercase;cursor:pointer;">
+          Fechar
+        </button>
+      </div>`;
+
+    let modal = Utils.el('modalRelatorioMensal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id        = 'modalRelatorioMensal';
+      modal.className = 'modal';
+      modal.style.cssText = 'z-index:200;';
+      modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML = html;
+    modal.classList.add('open');
+  }
+
+  return Object.freeze({ TIPOS, registrar, abrirEditar, salvarEdicao, apagar, limparTodos, _setPontoTipoBtn, relatorioMensal, exibirRelatorioMensal });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -217,18 +329,14 @@ const CaixaService = (() => {
    * Considera todas as vendas do dia (PDV + Comanda + Delivery).
    */
   function _preencherResumoDia() {
-    // FIX: Utils.formatCurrency está sempre disponível (app-core.js carrega antes deste módulo)
     const fmt = v => Utils.formatCurrency(v);
     const _s  = (id, val) => { const el = Utils.el(id); if (el) el.textContent = val; };
 
-    // Troco inicial da última abertura de caixa
     const ultimoEvento = Store.Selectors.getCaixa();
     let trocoInicial = 0;
-    // Encontra a ABERTURA mais recente (pode haver fechamentos anteriores)
     const ultimaAbertura = (ultimoEvento || []).find(c => c.tipo === 'ABERTURA');
     if (ultimaAbertura) trocoInicial = parseFloat(ultimaAbertura.valor) || 0;
 
-    // Vendas do dia usando a mesma lógica de _dataVenda do FinanceCalc
     const hoje = (() => {
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -246,16 +354,34 @@ const CaixaService = (() => {
     const vendasHoje = Store.Selectors.getVendas().filter(v => _dataVenda(v) === hoje);
 
     const FORMAS_DINHEIRO = ['dinheiro', 'espécie', 'especie', 'cash'];
-    const vendasDinheiro = vendasHoje
-      .filter(v => FORMAS_DINHEIRO.includes((v.formaPgto || '').toLowerCase()))
-      .reduce((a, v) => a + (v.total || 0), 0);
+    const FORMAS_PIX      = ['pix'];
+    const FORMAS_CARTAO   = ['cartão', 'cartao', 'débito', 'debito', 'crédito', 'credito'];
+    const FORMAS_FIADO    = ['fiado'];
 
-    const vendasOutros = vendasHoje
-      .filter(v => !FORMAS_DINHEIRO.includes((v.formaPgto || '').toLowerCase()))
-      .reduce((a, v) => a + (v.total || 0), 0);
+    // Função para checar forma (suporta multi-pgto e forma única)
+    const formaMatch = (venda, lista) => {
+      const pgtos = venda.pagamentos && venda.pagamentos.length > 0
+        ? venda.pagamentos
+        : [{ forma: venda.formaPgto || '', valor: venda.total || 0 }];
+      return pgtos.reduce((acc, p) => {
+        const fl = (p.forma || '').toLowerCase();
+        return acc + (lista.some(f => fl.includes(f)) ? (p.valor || 0) : 0);
+      }, 0);
+    };
 
-    const totalVendido = vendasHoje.reduce((a, v) => a + (v.total || 0), 0);
-    const esperado     = trocoInicial + vendasDinheiro;
+    const vendasDinheiro = vendasHoje.reduce((a, v) => a + formaMatch(v, FORMAS_DINHEIRO), 0);
+    const vendasPix      = vendasHoje.reduce((a, v) => a + formaMatch(v, FORMAS_PIX), 0);
+    const vendasCartao   = vendasHoje.reduce((a, v) => a + formaMatch(v, FORMAS_CARTAO), 0);
+    const vendasFiado    = vendasHoje.reduce((a, v) => a + formaMatch(v, FORMAS_FIADO), 0);
+    const totalVendido   = vendasHoje.reduce((a, v) => a + (v.total || 0), 0);
+
+    // Sangrias do fluxo de caixa registradas hoje
+    const sangrias = (Store.getState().movimentacoes || []).filter(m =>
+      m.tipo === 'saida' && m.categoria === 'sangria' &&
+      (m.dataCurta === hoje || (m.data || '').slice(0, 10) === hoje)
+    ).reduce((a, m) => a + (m.valor || 0), 0);
+
+    const esperado = trocoInicial + vendasDinheiro - sangrias;
 
     const qtdPdv      = vendasHoje.filter(v => v.origem === 'PDV').length;
     const qtdComanda  = vendasHoje.filter(v => v.origem === 'COMANDA').length;
@@ -263,14 +389,25 @@ const CaixaService = (() => {
 
     _s('fcTrocoInicial',   fmt(trocoInicial));
     _s('fcVendasDinheiro', fmt(vendasDinheiro));
-    _s('fcVendasOutros',   fmt(vendasOutros));
+    _s('fcVendasPix',      fmt(vendasPix));
+    _s('fcVendasCartao',   fmt(vendasCartao));
+    _s('fcVendasFiado',    fmt(vendasFiado));
+    _s('fcSangrias',       fmt(sangrias));
     _s('fcTotalVendido',   fmt(totalVendido));
     _s('fcEsperado',       fmt(esperado));
     _s('fcQtdVendas',      `${qtdPdv} PDV · ${qtdComanda} comanda(s) · ${qtdDelivery} delivery`);
 
-    // Guarda o valor esperado para calcular diferença
     const modalEl = Utils.el('modalFecharCaixa');
-    if (modalEl) modalEl.dataset.esperado = esperado.toFixed(2);
+    if (modalEl) {
+      modalEl.dataset.esperado    = esperado.toFixed(2);
+      modalEl.dataset.dinheiro    = vendasDinheiro.toFixed(2);
+      modalEl.dataset.pix         = vendasPix.toFixed(2);
+      modalEl.dataset.cartao      = vendasCartao.toFixed(2);
+      modalEl.dataset.fiado       = vendasFiado.toFixed(2);
+      modalEl.dataset.sangrias    = sangrias.toFixed(2);
+      modalEl.dataset.totalVendido = totalVendido.toFixed(2);
+      modalEl.dataset.trocoInicial = trocoInicial.toFixed(2);
+    }
   }
 
   /**
@@ -282,11 +419,14 @@ const CaixaService = (() => {
     const modalEl  = Utils.el('modalFecharCaixa');
     if (!input || !difEl || !modalEl) return;
 
-    const apurado  = parseFloat(input.value) || 0;
-    const esperado = parseFloat(modalEl.dataset.esperado) || 0;
-    const diff     = apurado - esperado;
+    const apurado   = parseFloat(input.value) || 0;
+    const sangriaV  = parseFloat(Utils.el('fcSangriaValor')?.value || '0') || 0;
+    // Recalcula esperado descontando sangria digitada agora
+    const esperadoBase = parseFloat(modalEl.dataset.esperado) || 0;
+    const esperado  = esperadoBase - sangriaV;
+    const diff      = apurado - esperado;
 
-    if (input.value === '') { difEl.classList.add('hidden'); return; }
+    if (input.value === '' && sangriaV === 0) { difEl.classList.add('hidden'); return; }
 
     difEl.classList.remove('hidden');
     const fmt = v => Utils.formatCurrency(Math.abs(v));
@@ -311,12 +451,29 @@ const CaixaService = (() => {
     const val = parseFloat(raw.replace(',', '.')) || 0;
     if (val < 0) { UIService.showToast('Erro', 'Valor não pode ser negativo', 'error'); return; }
 
+    // Registra sangria se informada
+    const sangriaVal    = parseFloat(Utils.el('fcSangriaValor')?.value || '0') || 0;
+    const sangriaMotivo = (Utils.el('fcSangriaMotivo')?.value || '').trim();
+    if (sangriaVal > 0) {
+      Store.mutate(state => {
+        if (!Array.isArray(state.movimentacoes)) state.movimentacoes = [];
+        state.movimentacoes.unshift({
+          id:        Utils.generateId(),
+          tipo:      'saida',
+          categoria: 'sangria',
+          valor:     sangriaVal,
+          descricao: sangriaMotivo || 'Sangria no fechamento de caixa',
+          data:      Utils.timestamp(),
+          dataCurta: Utils.todayISO(),
+        });
+      }, true);
+    }
+
     _registrarMovimento('FECHAMENTO', val, 'Fechamento de caixa');
     UIService.closeModal('modalFecharCaixa');
     UIService.showToast('Caixa Fechado', `Valor apurado: ${Utils.formatCurrency(val)}`, 'warning');
     EventBus.emit('caixa:fechado', val);
 
-    // FIX: gerar e enviar relatório completo do dia ao fechar o caixa
     setTimeout(() => _enviarRelatorioDia(val), 600);
   }
 
@@ -340,7 +497,7 @@ const CaixaService = (() => {
 
     const vendasHoje = Store.Selectors.getVendas().filter(v => _dataVenda(v) === hoje);
     const cfg        = Store.Selectors.getConfig();
-    const nomeLoja   = cfg.nome || 'CH Geladas';
+    const nomeLoja   = cfg.nome || 'PDV App';
 
     const totalBruto   = vendasHoje.reduce((a, v) => a + (v.total  || 0), 0);
     const totalLucro   = vendasHoje.reduce((a, v) => a + (v.lucro  || 0), 0);
@@ -778,68 +935,131 @@ const DataService = (() => {
     set('statPont', Store.getState().ponto?.length || 0);
     set('statInv',  Store.Selectors.getInventario().length);
     set('statDlv',  Store.Selectors.getPedidos().length);
+    _renderRestorePoints();
   }
 
   /**
    * Exporta backup completo como JSON
    */
   function exportarBackup() {
+    const state   = Store.getState();
+    const version = '9.0.0';
+    const ts      = new Date().toISOString();
     const payload = {
-      version:   '5.0.0-enterprise',
-      exportedAt: new Date().toISOString(),
-      data:       Store.getState(),
+      _backupVersion: version,
+      _exportedAt:    ts,
+      _exportedBy:    AuthService.getRole() || 'admin',
+      _checksum:      state.estoque?.length + '.' + (state.vendas?.length || 0),
+      data:           state,
     };
+
+    // Salva ponto de restauração local (máx 10)
+    Store.mutate(s => {
+      if (!Array.isArray(s.backupHistory)) s.backupHistory = [];
+      s.backupHistory.unshift({
+        id:         Utils.generateId(),
+        version,
+        timestamp:  ts,
+        label:      `Backup manual — ${Utils.timestamp()}`,
+        produtos:   state.estoque?.length || 0,
+        vendas:     state.vendas?.length  || 0,
+        snapshot:   JSON.stringify(payload).slice(0, 50_000), // ~50KB snapshot parcial
+      });
+    }, true);
+
     Utils.downloadBlob(
       JSON.stringify(payload, null, 2),
       'application/json',
-      `CH_Geladas_BKP_${new Date().toISOString().split('T')[0]}.json`
+      `CH_Geladas_BKP_v${version}_${ts.slice(0,10)}.json`
     );
     const lastEl = Utils.el('lastBackup');
-    if (lastEl) lastEl.textContent = Utils.timestamp();
-    UIService.showToast('Backup', 'Arquivo baixado com sucesso');
+    if (lastEl) lastEl.textContent = `Último: ${Utils.timestamp()}`;
+    UIService.showToast('Backup', `v${version} exportado com sucesso`);
+    SyncService.persist();
+    _renderRestorePoints();
   }
 
-  /**
-   * Importa dados de um arquivo JSON de backup
-   * @param {HTMLInputElement} input
-   */
+  function _renderRestorePoints() {
+    const cont = Utils.el('restorePointsList');
+    if (!cont) return;
+    const history = Store.getState().backupHistory || [];
+    if (!history.length) {
+      cont.innerHTML = '<p class="text-[9px] text-slate-600 text-center py-4 font-bold">Nenhum ponto salvo</p>';
+      return;
+    }
+    cont.innerHTML = history.map((h, i) => `
+      <div class="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-white/5 bg-slate-900/40">
+        <div class="flex-1 min-w-0">
+          <p class="text-[9px] font-black text-slate-200 truncate">${h.label || 'Backup'}</p>
+          <p class="text-[8px] text-slate-600 font-bold">${h.produtos || 0} prod · ${h.vendas || 0} vendas</p>
+        </div>
+        <div class="flex gap-1 flex-shrink-0">
+          ${h.snapshot ? `<button onclick="restoreFromPoint(${i})" class="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/25 text-[8px] font-black transition-all">Restaurar</button>` : ''}
+          <button onclick="deleteRestorePoint(${i})" class="w-6 h-6 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/25 flex items-center justify-center transition-all"><i class="fas fa-times text-[8px]"></i></button>
+        </div>
+      </div>`).join('');
+  }
+
   function importarDados(input) {
     const file = input.files?.[0];
     if (!file) return;
+
+    // Valida extensão e tamanho
+    if (!file.name.endsWith('.json')) {
+      UIService.showToast('Erro', 'Selecione um arquivo .json', 'error');
+      input.value = '';
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      UIService.showToast('Erro', 'Arquivo muito grande (máx 50MB)', 'error');
+      input.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = async e => {
       try {
         const parsed = Utils.safeJsonParse(e.target.result, null);
-        if (!parsed) throw new Error('Arquivo inválido');
+        if (!parsed) throw new Error('JSON inválido');
 
-        // Suporta formato legado (objeto com estoque diretamente)
-        // e novo formato ({ version, data: { estoque, ... } })
         const data = parsed.data ?? parsed;
 
+        // Validação estrutural
         if (!Array.isArray(data.estoque)) {
-          UIService.showToast('Erro', 'Arquivo inválido — estrutura incorreta', 'error');
+          UIService.showToast('Erro', 'Arquivo inválido — campo estoque ausente', 'error');
           return;
         }
+        if (typeof data.vendas !== 'undefined' && !Array.isArray(data.vendas)) {
+          UIService.showToast('Erro', 'Arquivo corrompido — campo vendas inválido', 'error');
+          return;
+        }
+
+        // Checksum simples
+        const expectedCheck = parsed._checksum;
+        if (expectedCheck) {
+          const actualCheck = data.estoque.length + '.' + (data.vendas?.length || 0);
+          if (expectedCheck !== actualCheck) {
+            UIService.showToast('Atenção', `Checksum divergente (${actualCheck} ≠ ${expectedCheck}) — pode estar incompleto`, 'warning');
+          }
+        }
+
+        const infoStr = `Versão: ${parsed._backupVersion || 'legado'}\nProdutos: ${data.estoque.length}\nVendas: ${(data.vendas || []).length}\nData: ${parsed._exportedAt ? new Date(parsed._exportedAt).toLocaleString('pt-BR') : '—'}`;
 
         const ok = await Dialog.danger({
-          title:        'Substituir todos os dados?',
-          message:      'Esta ação irá sobrescrever TODOS os dados atuais com os dados do backup. Não pode ser desfeita.',
+          title:        'Restaurar Backup?',
+          message:      infoStr + '\n\nIrá SUBSTITUIR todos os dados atuais.',
           icon:         'fa-file-import',
-          confirmLabel: 'Importar Backup',
+          confirmLabel: 'Restaurar',
         });
-        if (!ok) {
-          input.value = '';
-          return;
-        }
+        if (!ok) { input.value = ''; return; }
 
         Store.setState(data);
-        SyncService.persist();
-        UIService.showToast('Sucesso', 'Dados restaurados com sucesso!');
+        SyncService.persistNow();
+        UIService.showToast('Sucesso', 'Dados restaurados!');
         setTimeout(() => location.reload(), 1_500);
       } catch (err) {
         console.error('[DataService] Import failed:', err);
-        UIService.showToast('Erro', 'Falha ao ler o arquivo', 'error');
+        UIService.showToast('Erro', 'Falha ao ler arquivo: ' + (err.message || '?'), 'error');
       } finally {
         input.value = '';
       }
@@ -847,29 +1067,31 @@ const DataService = (() => {
     reader.readAsText(file);
   }
 
-  /**
-   * Reset completo do sistema com dupla confirmação
-   */
+  return Object.freeze({ renderDados, exportarBackup, importarDados, resetSistema, _renderRestorePoints });
   async function resetSistema() {
-    if (!AuthService.isAdmin()) {
-      UIService.showToast('Negado', 'Apenas administradores podem resetar o sistema', 'error');
-      return;
+    try {
+      if (!AuthService.isAdmin()) {
+        UIService.showToast('Negado', 'Apenas administradores podem resetar o sistema', 'error');
+        return;
+      }
+      const ok = await Dialog.promptDanger({
+        title:        '⚠️ Reset Completo do Sistema',
+        message:      'Esta ação irá apagar TODOS os dados (estoque, vendas, caixa, ponto, delivery). IMPOSSÍVEL desfazer.',
+        keyword:      'DELETAR',
+        confirmLabel: 'Confirmar Reset',
+      });
+      if (!ok) {
+        UIService.showToast('Cancelado', 'Reset abortado', 'warning');
+        return;
+      }
+      Store.resetState();
+      SyncService.persist();
+      UIService.showToast('Reset', 'Todos os dados foram apagados', 'error');
+      setTimeout(() => location.reload(), 1_500);
+    } catch (err) {
+      console.error('[DataService.resetSistema]', err);
+      UIService.showToast('Erro', 'Falha ao resetar. Tente novamente.', 'error');
     }
-    const ok = await Dialog.promptDanger({
-      title:        '⚠️ Reset Completo do Sistema',
-      message:      'Esta ação irá apagar TODOS os dados (estoque, vendas, caixa, ponto, delivery). IMPOSSÍVEL desfazer.',
-      keyword:      'DELETAR',
-      confirmLabel: 'Confirmar Reset',
-    });
-    if (!ok) {
-      UIService.showToast('Cancelado', 'Reset abortado', 'warning');
-      return;
-    }
-
-    Store.resetState();
-    SyncService.persist();
-    UIService.showToast('Reset', 'Todos os dados foram apagados', 'error');
-    setTimeout(() => location.reload(), 1_500);
   }
 
   return Object.freeze({ renderDados, exportarBackup, importarDados, resetSistema });
@@ -938,16 +1160,36 @@ const EstoqueService = (() => {
     if (!validation.valid) { UIService.showToast('Erro', validation.errors[0], 'error'); return; }
 
     if (_editingId !== null) {
+      const prodAntes = Store.Selectors.getProdutoById(_editingId);
+      const qtdAntes  = prodAntes?.qtdUn ?? 0;
       Store.mutate(state => {
         const idx = state.estoque.findIndex(p => String(p.id) === String(_editingId));
         if (idx !== -1)
           state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._tempPacks] };
       }, true);
+      // Auditoria de estoque quando quantidade mudou
+      if (qtdAntes !== qtd) {
+        _registrarAuditEstoque({
+          prodId: _editingId, produto: nome,
+          qtdAntes, qtdDepois: qtd,
+          motivo: 'Edição de produto (formulário)',
+          responsavel: 'Admin',
+          tipo: 'AJUSTE',
+        });
+      }
       UIService.showToast('Estoque', `${nome} atualizado`);
     } else {
+      const novoId = Utils.generateId();
       Store.mutate(state => {
-        state.estoque.push({ id: Utils.generateId(), nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._tempPacks] });
+        state.estoque.push({ id: novoId, nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._tempPacks] });
       }, true);
+      _registrarAuditEstoque({
+        prodId: novoId, produto: nome,
+        qtdAntes: 0, qtdDepois: qtd,
+        motivo: 'Cadastro inicial',
+        responsavel: 'Admin',
+        tipo: 'ENTRADA',
+      });
       UIService.showToast('Estoque', `${nome} adicionado`);
     }
 
@@ -989,22 +1231,31 @@ const EstoqueService = (() => {
   }
 
   async function removerProduto(prodId) {
-    const prod = Store.Selectors.getProdutoById(prodId);
-    if (!prod) return;
-    const ok = await Dialog.danger({
-      title:        `Remover "${prod.nome}"?`,
-      message:      'O produto será excluído do estoque. Esta ação não pode ser desfeita.',
-      icon:         'fa-box-open',
-      confirmLabel: 'Remover',
-    });
-    if (!ok) return;
-    Store.mutate(state => {
-      const idx = state.estoque.findIndex(p => String(p.id) === String(prodId));
-      if (idx !== -1) state.estoque.splice(idx, 1);
-    }, true);
-    SyncService.persist();
-    UIService.showToast('Produto removido', '', 'warning');
-    EventBus.emit('estoque:updated');
+    try {
+      const prod = Store.Selectors.getProdutoById(prodId);
+      if (!prod) return;
+      const ok = await Dialog.danger({
+        title:        `Remover "${prod.nome}"?`,
+        message:      'O produto será excluído do estoque. Esta ação não pode ser desfeita.',
+        icon:         'fa-box-open',
+        confirmLabel: 'Remover',
+      });
+      if (!ok) return;
+      const qtdSnap = prod.qtdUn;
+      Store.mutate(state => {
+        const idx = state.estoque.findIndex(p => String(p.id) === String(prodId));
+        if (idx !== -1) state.estoque.splice(idx, 1);
+      }, true);
+      _registrarAuditEstoque({
+        prodId, produto: prod.nome,
+        qtdAntes: qtdSnap, qtdDepois: 0,
+        motivo: 'Produto removido do estoque',
+        tipo:   'REMOCAO',
+      });
+      SyncService.persist();
+      UIService.showToast('Produto removido', '', 'warning');
+      EventBus.emit('estoque:updated');
+    } catch (err) { console.error('[estoque.removerProduto]', err); }
   }
 
   /* ── Edição Rápida (modal) ───────────────────────────────── */
@@ -1058,11 +1309,31 @@ const EstoqueService = (() => {
     const validation = Validators.validateProduct({ nome, precoUn: preco, custoUn: custo, qtdUn: qtd });
     if (!validation.valid) { UIService.showToast('Erro', validation.errors[0], 'error'); return; }
 
+    const prodAntes = Store.Selectors.getProdutoById(id);
+    const qtdAntes  = prodAntes?.qtdUn ?? 0;
+
     Store.mutate(state => {
       const idx = state.estoque.findIndex(p => String(p.id) === id);
       if (idx !== -1)
         state.estoque[idx] = { ...state.estoque[idx], nome, precoUn: preco, custoUn: custo, qtdUn: qtd, categoria, packs: [..._epPacks] };
     }, true);
+
+    if (qtdAntes !== qtd) {
+      const motivo = Utils.el('epMotivo')?.value.trim() || '';
+      if (!motivo) {
+        UIService.showToast('Auditoria', 'Informe o motivo do ajuste de estoque', 'warning');
+        setTimeout(() => Utils.el('epMotivo')?.focus(), 100);
+        return; // bloqueia o save sem motivo
+      }
+      _registrarAuditEstoque({
+        prodId: id, produto: nome,
+        qtdAntes, qtdDepois: qtd,
+        motivo,
+        responsavel: 'Admin',
+        tipo: qtd > qtdAntes ? 'ENTRADA' : 'SAIDA',
+      });
+    }
+
     SyncService.persist();
     UIService.closeModal('modalEditProd');
     UIService.showToast('Produto', `${nome} atualizado`);
@@ -1210,10 +1481,39 @@ function exportarBackup()        { DataService.exportarBackup(); }
 function importarDados(input)    { DataService.importarDados(input); }
 function resetSistema()          { DataService.resetSistema(); }
 
+async function restoreFromPoint(idx) {
+  try {
+    const history = Store.getState().backupHistory || [];
+    const point   = history[idx];
+    if (!point?.snapshot) return;
+    const parsed = Utils.safeJsonParse(point.snapshot, null);
+    if (!parsed) { UIService.showToast('Erro', 'Ponto de restauração inválido', 'error'); return; }
+    const data = parsed.data ?? parsed;
+    if (!Array.isArray(data.estoque)) { UIService.showToast('Erro', 'Snapshot incompleto', 'error'); return; }
+    const ok = await Dialog.danger({
+      title:        'Restaurar este ponto?',
+      message:      `${point.label}\n${point.produtos} produtos · ${point.vendas} vendas\nSubstitui dados atuais.`,
+      icon:         'fa-history',
+      confirmLabel: 'Restaurar',
+    });
+    if (!ok) return;
+    Store.setState(data);
+    SyncService.persistNow();
+    UIService.showToast('Restaurado', point.label, 'success');
+    setTimeout(() => location.reload(), 1_500);
+  } catch (err) { UIService.showToast('Erro', err.message || 'Falha', 'error'); }
+}
+
+async function deleteRestorePoint(idx) {
+  Store.mutate(s => { s.backupHistory?.splice(idx, 1); }, true);
+  SyncService.persist();
+  DataService._renderRestorePoints();
+}
+
 // ── Estoque
 function renderEstoque()         { EstoqueService.renderEstoque(); }
 function resetFormEstoque()      { EstoqueService.resetForm(); }
-function addPackForm()           { EstoqueService.adicionarPack(); }   // bridge para HTML (tPackList)
+function addPackForm()           { EstoqueService.adicionarPack(); }
 function adicionarPack()         { EstoqueService.adicionarPack(); }
 function removerTempPack(i)      { EstoqueService.removerTempPack(i); }
 function salvarProduto()         { EstoqueService.salvarProduto(); }
@@ -1221,22 +1521,23 @@ function editarProduto(id)       { EstoqueService.editarProduto(id); }
 function removerProduto(id)      { EstoqueService.removerProduto(id); }
 function abrirEdicaoRapida(id)   { EstoqueService.abrirEdicaoRapida(id); }
 function epAdicionarPack()       { EstoqueService.epAdicionarPack(); }
-function addPackModal()          { EstoqueService.epAdicionarPack(); }  // alias usado no HTML
+function addPackModal()          { EstoqueService.epAdicionarPack(); }
 function epRemoverPack(i)        { EstoqueService.epRemoverPack(i); }
 function salvarEdicaoRapida()    { EstoqueService.salvarEdicaoRapida(); }
-function salvarProdModal()       { EstoqueService.salvarEdicaoRapida(); } // alias usado no HTML
+function salvarProdModal()       { EstoqueService.salvarEdicaoRapida(); }
 
-// ajuste de stock no modal de edição rápida
 function ajusteStock(delta) {
   const el = Utils.el('epQtd');
   if (!el) return;
   const atual = parseInt(el.value) || 0;
   el.value = Math.max(0, atual + delta);
+  // Quando a qtd muda via botão +/-, exibe campo de motivo
+  const wrap = Utils.el('epMotivoWrap');
+  if (wrap) wrap.classList.remove('hidden');
 }
 
-// entrada rápida de stock no modal de edição rápida
 function entradaRapida() {
-  const qtdEl = Utils.el('epEntrada');
+  const qtdEl     = Utils.el('epEntrada');
   const estoqueEl = Utils.el('epQtd');
   if (!qtdEl || !estoqueEl) return;
   const entrada = parseInt(qtdEl.value) || 0;
@@ -1244,4 +1545,69 @@ function entradaRapida() {
   estoqueEl.value = (parseInt(estoqueEl.value) || 0) + entrada;
   qtdEl.value = '';
   UIService.showToast('Estoque', `+${entrada} unidades adicionadas`);
+  const wrap = Utils.el('epMotivoWrap');
+  if (wrap) wrap.classList.remove('hidden');
 }
+
+// ── Auditoria de Estoque
+function _registrarAuditEstoque({ prodId, produto, qtdAntes, qtdDepois, motivo, responsavel, tipo }) {
+  const role = AuthService.getRole();
+  const resp = responsavel || (role === 'admin' ? 'Admin' : role === 'pdv' ? 'Colaborador' : 'Sistema');
+  Store.mutate(state => {
+    if (!Array.isArray(state.auditEstoque)) state.auditEstoque = [];
+    state.auditEstoque.unshift({
+      id:         Utils.generateId(),
+      prodId:     String(prodId),
+      produto:    String(produto),
+      qtdAntes,
+      qtdDepois,
+      delta:      qtdDepois - qtdAntes,
+      motivo:     motivo || '—',
+      responsavel: resp,
+      tipo:       tipo || 'AJUSTE',
+      data:       Utils.todayISO(),
+      hora:       Utils.now(),
+      timestamp:  Date.now(),
+    });
+  }, true);
+}
+
+function renderAuditEstoque() {
+  const cont = Utils.el('auditEstoqueLista');
+  if (!cont) return;
+  const filtroProd = (Utils.el('auditEstoqueFiltro')?.value || '').toLowerCase();
+  let logs = Store.Selectors.getAuditEstoque();
+  if (filtroProd) logs = logs.filter(l =>
+    (l.produto || '').toLowerCase().includes(filtroProd) ||
+    (l.motivo  || '').toLowerCase().includes(filtroProd)
+  );
+  if (!logs.length) {
+    cont.innerHTML = '<p class="text-center text-slate-600 text-[9px] font-black uppercase py-8">Nenhum registro ainda</p>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  logs.slice(0, 120).forEach(l => {
+    const isEntrada = l.delta > 0;
+    const div = document.createElement('div');
+    div.innerHTML = `
+      <div class="flex items-start gap-3 px-3 py-2.5 rounded-xl border ${isEntrada ? 'border-emerald-500/15 bg-emerald-500/5' : 'border-red-500/15 bg-red-500/5'}">
+        <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isEntrada ? 'bg-emerald-500/20' : 'bg-red-500/20'}">
+          <i class="fas ${isEntrada ? 'fa-arrow-up text-emerald-400' : 'fa-arrow-down text-red-400'} text-[9px]"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-[10px] font-black text-slate-200 truncate">${l.produto || '—'}</p>
+          <p class="text-[8px] text-slate-500 font-bold truncate">${l.motivo || '—'}</p>
+          <p class="text-[8px] text-slate-600 font-bold">${l.data || ''} ${l.hora || ''} · ${l.responsavel || ''}</p>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <p class="text-[11px] font-black ${isEntrada ? 'text-emerald-400' : 'text-red-400'}">${isEntrada ? '+' : ''}${l.delta} un</p>
+          <p class="text-[8px] text-slate-600">${l.qtdAntes} → ${l.qtdDepois}</p>
+        </div>
+      </div>`;
+    frag.appendChild(div.firstElementChild);
+  });
+  cont.innerHTML = '';
+  cont.appendChild(frag);
+}
+
+function pontoRelatorioMensal() { PontoService.exibirRelatorioMensal(); }

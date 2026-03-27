@@ -28,9 +28,27 @@ import {
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════════════════ */
-const STORAGE_KEY          = 'CH_GELADAS_DB_ENTERPRISE';
-const FIRESTORE_COLLECTION = 'ch_geladas';
-const FIRESTORE_DOC_ID     = 'sistema';
+
+/** Lê LOJA_CONFIG do localStorage (sem dependências externas) */
+function _getLojaConfig() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+const _lojaCfg = _getLojaConfig();
+
+/** Deriva chave de storage isolada por projeto Firebase */
+function _deriveKey(suffix, fallback) {
+  const pid = _lojaCfg.firebase?.projectId;
+  if (pid && pid !== 'ch-geladas') {
+    const slug = pid.toUpperCase().replace(/-/g, '_').replace(/[^A-Z0-9_]/g, '');
+    return `PDV_${suffix}_${slug}`;
+  }
+  return fallback;
+}
+
+const STORAGE_KEY          = _deriveKey('DB',      'CH_GELADAS_DB_ENTERPRISE');
+const FIRESTORE_COLLECTION = _lojaCfg.firestoreCollection || 'ch_geladas';
+const FIRESTORE_DOC_ID     = _lojaCfg.firestoreDocId     || 'sistema';
 
 const FIREBASE_WAIT_MS     = 5_000;   // timeout aguardando Firebase inicializar
 const BACKUP_DEBOUNCE_MS   = 1_500;   // debounce de escrita no Firestore
@@ -361,16 +379,21 @@ function _applyRemoteSnapshot(remoteData, remoteTs) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   BACKUP — localStorage → Firestore (com debounce + retry)
+   BACKUP — localStorage → Firestore (com debounce + retry exponencial)
 ═══════════════════════════════════════════════════════════════════ */
+
+// Fila offline: guarda operações que falharam para reenvio ao reconectar
+let _offlineQueue    = [];
+let _retryAttempt    = 0;
+const RETRY_DELAYS   = [5_000, 15_000, 30_000, 60_000, 120_000]; // backoff exponencial
 
 /**
  * Executa o backup efetivo no Firestore.
- * Se falhar, agenda retry em 15s (backoff linear simples).
+ * Se falhar, usa retry exponencial com backoff.
  */
 async function _executeBackup() {
   const db = window.firestoreDB;
-  if (!db) { _isOffline = true; ConnectivityUI.set('offline'); return; }
+  if (!db) { _isOffline = true; ConnectivityUI.set('offline'); _enqueueForRetry(); return; }
 
   const data = _readLocal();
   if (!data) return;
@@ -384,23 +407,34 @@ async function _executeBackup() {
       setDoc(ref, {
         data,
         updated: new Date().toISOString(),
-        version: '6.0.0-enterprise',
-        device:  navigator.userAgent.slice(0, 80), // identifica qual device salvou (debug)
+        version: '6.1.0-enterprise',
+        device:  navigator.userAgent.slice(0, 80),
       }),
       BACKUP_TIMEOUT_MS
     );
 
-    _isOffline = false;
+    _isOffline    = false;
+    _retryAttempt = 0;
+    _offlineQueue = []; // limpa fila ao ter sucesso
     ConnectivityUI.set('online');
     console.info(`[Sync] 🔥 Backup OK (${new Date().toLocaleTimeString('pt-BR')})`);
 
   } catch (err) {
     _isOffline = true;
     ConnectivityUI.set('error');
-    console.warn('[Sync] Backup falhou — retry em 15s:', err.message);
+    _enqueueForRetry();
+    const delay = RETRY_DELAYS[Math.min(_retryAttempt, RETRY_DELAYS.length - 1)];
+    _retryAttempt++;
+    console.warn(`[Sync] Backup falhou — retry #${_retryAttempt} em ${delay/1000}s:`, err.message);
+    setTimeout(_executeBackup, delay);
+  }
+}
 
-    // Backoff: tenta novamente em 15s sem acumular debounce
-    setTimeout(_executeBackup, 15_000);
+/** Enfileira estado atual para reenvio */
+function _enqueueForRetry() {
+  const data = _readLocal();
+  if (data && _offlineQueue.length < 3) {
+    _offlineQueue.push({ data, ts: Date.now() });
   }
 }
 
@@ -432,10 +466,18 @@ function _flushImmediate() {
 ═══════════════════════════════════════════════════════════════════ */
 window.addEventListener('ch:connectivity', ({ detail }) => {
   if (detail.online) {
-    // Voltou online: re-inicia listener + faz backup imediato se houver dados
     _startRealtimeListener();
     const hasLocal = !!_readLocal();
-    if (hasLocal) _executeBackup();
+    if (hasLocal) {
+      _retryAttempt = 0; // reset backoff ao reconectar
+      _executeBackup();
+    }
+    // Processa fila offline
+    if (_offlineQueue.length > 0) {
+      console.info(`[Sync] Reconectado — processando ${_offlineQueue.length} item(s) da fila offline`);
+      _offlineQueue = [];
+      _executeBackup();
+    }
   } else {
     _isOffline = true;
     ConnectivityUI.set('offline');
