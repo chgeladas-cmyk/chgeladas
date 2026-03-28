@@ -816,7 +816,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
               <!-- Botões pagamento rápido -->
               <div id="quickPayBtns" class="hidden grid grid-cols-3 gap-1.5 mb-2">
-                <button onclick="quickPay('Dinheiro')"
+                <button onclick="abrirTroco()"
                   class="py-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/25 text-emerald-300 font-black text-[9px] uppercase flex flex-col items-center gap-0.5 transition-all active:scale-95">
                   <i class="fas fa-money-bill-wave text-sm"></i>Dinheiro
                 </button>
@@ -868,7 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <!-- Botões pagamento rápido mobile -->
             <div id="quickPayBtnsMob" class="hidden grid grid-cols-3 gap-2 mb-2">
-              <button onclick="quickPay('Dinheiro');fecharDrawer()"
+              <button onclick="fecharDrawer();abrirTroco()"
                 class="py-3.5 rounded-xl bg-emerald-600/20 border border-emerald-500/25 text-emerald-300 font-black text-[10px] uppercase flex flex-col items-center gap-1 active:scale-95 transition-all">
                 <i class="fas fa-money-bill-wave text-base"></i>Dinheiro
               </button>
